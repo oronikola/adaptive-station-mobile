@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:sim_data_new/sim_data.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -149,6 +150,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   Future<void> _start() async {
     if (_running) return;
     _running = true;
+    if (mounted) setState(() {});
 
     await WakelockPlus.enable();
     await FlutterForegroundTask.startService(
@@ -241,28 +243,44 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     return Scaffold(
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildHeader(palette),
-              const SizedBox(height: 20),
+              const SizedBox(height: 22),
               if (!_permissionsGranted)
-                _buildPermissionsCard(palette)
+                _buildEmptyState(
+                  palette,
+                  icon: LucideIcons.smartphone,
+                  title: 'Permissions needed',
+                  message: 'SMS and phone access are required to operate as a gateway device.',
+                  action: FilledButton(onPressed: _bootstrap, child: const Text('Grant permissions')),
+                )
               else if (_simCards.isEmpty)
-                const StationCard(child: Text('No SIM cards detected. Insert at least one SIM.'))
+                _buildEmptyState(
+                  palette,
+                  icon: LucideIcons.wifiOff,
+                  title: 'No SIM detected',
+                  message: 'Insert at least one SIM card to start sending.',
+                )
               else ...[
                 _buildStatsRow(palette),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: _running ? _stop : _start,
-                    child: Text(_running ? 'Pause sending' : 'Resume sending'),
-                  ),
+                const SizedBox(height: 14),
+                _buildRunControl(palette),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('Recipients', style: Theme.of(context).textTheme.titleMedium),
+                    ),
+                    Text(
+                      '${_records.length}',
+                      style: StationFonts.mono(fontSize: 12, color: palette.muted, fontWeight: FontWeight.w700),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 20),
-                SectionHeading(title: 'Recipients (${_records.length})'),
+                const SizedBox(height: 10),
                 Expanded(child: _buildRecipientList(palette)),
               ],
             ],
@@ -274,19 +292,34 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
 
   Widget _buildHeader(StationPalette palette) => Row(
     children: [
-      StationAvatar(initials: 'AS', color: Colors.white, background: palette.blue),
+      Container(
+        width: 48,
+        height: 48,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: palette.blueTint, borderRadius: BorderRadius.circular(15)),
+        child: Icon(LucideIcons.radio, size: 22, color: palette.blue),
+      ),
       const SizedBox(width: 12),
       Expanded(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              widget.repository.deviceLabel ?? 'Gateway device',
-              style: Theme.of(context).textTheme.titleLarge,
-              overflow: TextOverflow.ellipsis,
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    widget.repository.deviceLabel ?? 'Gateway device',
+                    style: Theme.of(context).textTheme.titleLarge,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (_permissionsGranted && _simCards.isNotEmpty) _buildLiveBadge(palette),
+              ],
             ),
+            const SizedBox(height: 2),
             Text(
-              'SMS GATEWAY · ${ApiConfig.apiRoot} · ${_simCards.length} SIM(s)',
+              '${ApiConfig.apiRoot} · ${_simCards.length} SIM(s)',
               style: StationFonts.mono(fontSize: 10.5, color: palette.muted),
               overflow: TextOverflow.ellipsis,
             ),
@@ -297,41 +330,120 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       IconButton(
         tooltip: 'Log out',
         onPressed: _logout,
-        icon: const Icon(Icons.logout),
+        icon: Icon(LucideIcons.logOut, size: 20),
       ),
     ],
   );
 
-  Widget _buildPermissionsCard(StationPalette palette) => StationCard(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'SMS and phone permissions are required.',
-          style: TextStyle(color: palette.heading, fontWeight: FontWeight.w700),
+  Widget _buildLiveBadge(StationPalette palette) {
+    final accent = _running ? palette.green : palette.muted;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: _running ? palette.greenTint : palette.inset,
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_running) ...[
+            RadarPulse(color: accent, size: 6, ringCount: 1),
+            const SizedBox(width: 5),
+          ] else ...[
+            Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: accent)),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            _running ? 'LIVE' : 'PAUSED',
+            style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: accent, letterSpacing: 0.6),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(
+    StationPalette palette, {
+    required IconData icon,
+    required String title,
+    required String message,
+    Widget? action,
+  }) => Expanded(
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: palette.inset, borderRadius: BorderRadius.circular(20)),
+              child: Icon(icon, size: 28, color: palette.muted),
+            ),
+            const SizedBox(height: 16),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: palette.muted, height: 1.5),
+            ),
+            if (action != null) ...[const SizedBox(height: 18), action],
+          ],
         ),
-        const SizedBox(height: 12),
-        FilledButton(onPressed: _bootstrap, child: const Text('Grant permissions')),
-      ],
+      ),
     ),
   );
 
   Widget _buildStatsRow(StationPalette palette) => Row(
     children: [
-      Expanded(child: _StatCard(label: 'Sent', value: _sentCount, color: palette.blue)),
+      Expanded(child: _StatCard(icon: LucideIcons.send, label: 'Sent', value: _sentCount, color: palette.blue, tint: palette.blueTint)),
       const SizedBox(width: 10),
-      Expanded(child: _StatCard(label: 'Delivered', value: _deliveredCount, color: palette.green)),
+      Expanded(child: _StatCard(icon: LucideIcons.checkCheck, label: 'Delivered', value: _deliveredCount, color: palette.green, tint: palette.greenTint)),
       const SizedBox(width: 10),
-      Expanded(child: _StatCard(label: 'Failed', value: _failedCount, color: Colors.red)),
+      Expanded(child: _StatCard(icon: LucideIcons.xCircle, label: 'Failed', value: _failedCount, color: Colors.red, tint: Colors.red.withValues(alpha: 0.12))),
     ],
+  );
+
+  Widget _buildRunControl(StationPalette palette) => StationCard(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    child: Row(
+      children: [
+        Icon(
+          _running ? LucideIcons.activity : LucideIcons.pause,
+          size: 18,
+          color: _running ? palette.green : palette.muted,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            _running ? 'Actively claiming and sending' : 'Sending paused',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: palette.ink),
+          ),
+        ),
+        OutlinedButton.icon(
+          onPressed: _running ? _stop : _start,
+          icon: Icon(_running ? LucideIcons.pause : LucideIcons.play, size: 15),
+          label: Text(_running ? 'Pause' : 'Resume'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 38),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    ),
   );
 
   Widget _buildRecipientList(StationPalette palette) {
     if (_records.isEmpty) {
-      return StationCard(
-        child: Center(
-          child: Text('Nothing sent yet.', style: TextStyle(color: palette.muted)),
-        ),
+      return _buildEmptyState(
+        palette,
+        icon: LucideIcons.messageSquare,
+        title: 'Nothing sent yet',
+        message: 'Claimed messages will appear here as soon as there\'s a pending tap alert.',
       );
     }
 
@@ -348,25 +460,45 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value, required this.color});
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.tint,
+  });
+  final IconData icon;
   final String label;
   final int value;
   final Color color;
+  final Color tint;
 
   @override
   Widget build(BuildContext context) {
     final palette = StationPalette.of(context);
     return StationCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(color: palette.muted, fontSize: 11)),
-          const SizedBox(height: 2),
-          Text(
-            '$value',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(color: color),
+          Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: tint, borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, size: 15, color: color),
           ),
+          const SizedBox(height: 10),
+          TweenAnimationBuilder<int>(
+            tween: IntTween(begin: 0, end: value),
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutCubic,
+            builder: (context, animatedValue, _) => Text(
+              '$animatedValue',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          Text(label, style: TextStyle(color: palette.muted, fontSize: 11)),
         ],
       ),
     );
@@ -380,11 +512,21 @@ class _RecipientRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = StationPalette.of(context);
+    final (icon, color, bg) = _statusVisuals(palette);
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(11)),
+            child: Icon(icon, size: 16, color: color),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,7 +549,10 @@ class _RecipientRow extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              _statusPill(palette),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: _statusPill(context, key: ValueKey(record.status)),
+              ),
               const SizedBox(height: 4),
               Text(
                 _formatTime(record.timestamp),
@@ -420,7 +565,16 @@ class _RecipientRow extends StatelessWidget {
     );
   }
 
-  Widget _statusPill(StationPalette palette) {
+  (IconData, Color, Color) _statusVisuals(StationPalette palette) => switch (record.status) {
+    _SendStatus.sending => (LucideIcons.clock3, palette.muted, palette.inset),
+    _SendStatus.sent => (LucideIcons.send, palette.blue, palette.blueTint),
+    _SendStatus.delivered => (LucideIcons.checkCheck, palette.green, palette.greenTint),
+    _SendStatus.notDelivered => (LucideIcons.helpCircle, palette.muted, palette.inset),
+    _SendStatus.failed => (LucideIcons.xCircle, Colors.red, Colors.red.withValues(alpha: 0.12)),
+  };
+
+  Widget _statusPill(BuildContext context, {required Key key}) {
+    final palette = StationPalette.of(context);
     final (label, color, bg) = switch (record.status) {
       _SendStatus.sending => ('Sending', palette.muted, palette.inset),
       _SendStatus.sent => ('Sent', palette.blue, palette.blueTint),
@@ -430,6 +584,7 @@ class _RecipientRow extends StatelessWidget {
     };
 
     return Container(
+      key: key,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(30)),
       child: Text(

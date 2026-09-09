@@ -21,22 +21,22 @@ class UnifiedLoginResult {
 }
 
 /// The one shared login call for both account types — see
-/// App\Http\Controllers\Api\Auth\LoginController on the backend.
-/// `schoolCode` present/absent is what selects parent vs gateway-sender;
-/// there's no separate role field in the request.
+/// App\Http\Controllers\Api\Auth\LoginController on the backend. A parent's
+/// globally-unique login ID (App\Models\ParentAccount::generateLoginId())
+/// and a gateway device's username live in disjoint identifier spaces, so
+/// the backend can tell which is which from `identifier` alone — no school
+/// code or role field needed in the request.
 class AuthApi {
   AuthApi({http.Client? httpClient}) : _http = httpClient ?? http.Client();
 
   final http.Client _http;
 
   Future<UnifiedLoginResult> login({
-    String? schoolCode,
     required String identifier,
     required String password,
   }) async {
     final uri = Uri.parse('${ApiConfig.apiRoot}/auth/login');
     final body = jsonEncode({
-      if (schoolCode != null && schoolCode.isNotEmpty) 'school_code': schoolCode,
       'identifier': identifier,
       'password': password,
     });

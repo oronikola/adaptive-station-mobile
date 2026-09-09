@@ -7,11 +7,11 @@ import '../../data/parent_repository.dart';
 import '../../design/components.dart';
 import '../../services/push_notification_service.dart';
 
-/// Shared by both account types — a parent (school code + email + password)
-/// and a gateway-sender device (username + password, school code left
-/// blank). Which one a login resolves to is decided server-side by whether
-/// `school_code` was sent at all; this screen never asks the person to pick
-/// a role up front.
+/// Shared by both account types — a parent (login ID + password) and a
+/// gateway-sender device (username + password). Which one a login resolves
+/// to is decided server-side purely from which identifier space the value
+/// matches (see AuthApi's docblock); this screen never asks the person to
+/// pick a role, or a school, up front.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
     super.key,
@@ -29,7 +29,6 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _schoolCodeController = TextEditingController();
   final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authApi = AuthApi();
@@ -38,7 +37,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    _schoolCodeController.dispose();
     _identifierController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -54,7 +52,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final result = await _authApi.login(
-        schoolCode: _schoolCodeController.text.trim(),
         identifier: _identifierController.text.trim(),
         password: _passwordController.text,
       );
@@ -114,29 +111,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Parents: log in with your school code, email, and password.\n'
-                    'Gateway devices: leave school code blank and use your device username.',
+                    'Parents: log in with your Parent ID and password.\n'
+                    'Gateway devices: use your device username.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 28),
                   TextFormField(
-                    controller: _schoolCodeController,
-                    textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(
-                      labelText: 'School code (parents only)',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
                     controller: _identifierController,
-                    keyboardType: TextInputType.emailAddress,
+                    textCapitalization: TextCapitalization.characters,
                     textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
-                      labelText: 'Email or device username',
+                      labelText: 'Parent ID or device username',
                     ),
                     validator: (value) =>
                         (value == null || value.trim().isEmpty)
-                        ? 'Enter your email or username'
+                        ? 'Enter your Parent ID or username'
                         : null,
                   ),
                   const SizedBox(height: 16),
