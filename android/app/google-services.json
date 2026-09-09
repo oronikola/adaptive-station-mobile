@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "314042120931",
+    "project_id": "adaptive-station-71667",
+    "storage_bucket": "adaptive-station-71667.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:314042120931:android:351d08799083b6f55863d6",
+        "android_client_info": {
+          "package_name": "com.adaptivestation.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCwQSPb8i9Fx1o2sk932fYLZOQqGsBGRhk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
