@@ -17,6 +17,11 @@ abstract class ParentRepository {
     required String password,
   });
 
+  /// Persists a token/profile already obtained elsewhere — used after the
+  /// shared login screen's unified login call resolves to the parent role,
+  /// so this repository doesn't need its own separate login round-trip.
+  Future<void> saveSession(String token, Map<String, dynamic>? profile);
+
   Future<void> logout();
 
   Future<List<Student>> fetchChildren();
@@ -85,13 +90,20 @@ class ApiParentRepository implements ParentRepository {
       'password': password,
     });
 
-    await _client.saveToken(response['token'] as String);
-    final parent = response['parent'] as Map<String, dynamic>?;
-    _parentId = parent?['id'] as String?;
-    _parentName = parent?['name'] as String?;
-    _parentEmail = parent?['email'] as String?;
-    if (parent != null) {
-      await _client.saveParentProfile(parent);
+    await saveSession(
+      response['token'] as String,
+      response['parent'] as Map<String, dynamic>?,
+    );
+  }
+
+  @override
+  Future<void> saveSession(String token, Map<String, dynamic>? profile) async {
+    await _client.saveToken(token);
+    _parentId = profile?['id'] as String?;
+    _parentName = profile?['name'] as String?;
+    _parentEmail = profile?['email'] as String?;
+    if (profile != null) {
+      await _client.saveParentProfile(profile);
     }
   }
 

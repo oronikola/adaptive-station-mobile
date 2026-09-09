@@ -29,6 +29,16 @@ abstract final class ApiConfig {
     'REVERB_APP_KEY',
     defaultValue: 'aopushzmwi0wxxreepdh',
   );
+
+  /// [baseUrl] is scoped to `/api/v1/parent` — endpoints outside that scope
+  /// (the shared login, and gateway-sender mode's `/api/v1/device/sms/*`)
+  /// need the bare `/api/v1` root instead. Derived from [baseUrl] rather
+  /// than its own dart-define so the two can never drift apart.
+  static String get apiRoot {
+    final uri = Uri.parse(baseUrl);
+    final segments = List<String>.from(uri.pathSegments)..removeLast();
+    return uri.replace(pathSegments: segments).toString();
+  }
 }
 
 class ApiException implements Exception {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:adaptivemobile_station/data/gateway_sender_repository.dart';
 import 'package:adaptivemobile_station/main.dart';
 import 'package:adaptivemobile_station/services/theme_controller.dart';
 import 'support/fake_parent_repository.dart';
@@ -28,7 +29,8 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       StationParentApp(
-        repository: FakeParentRepository(),
+        parentRepository: FakeParentRepository(),
+        gatewayRepository: GatewaySenderRepository(),
         themeController: ThemeController(),
       ),
     );
@@ -60,7 +62,8 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       StationParentApp(
-        repository: FakeParentRepository(),
+        parentRepository: FakeParentRepository(),
+        gatewayRepository: GatewaySenderRepository(),
         themeController: ThemeController(),
       ),
     );
@@ -84,7 +87,8 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       StationParentApp(
-        repository: FakeParentRepository(),
+        parentRepository: FakeParentRepository(),
+        gatewayRepository: GatewaySenderRepository(),
         themeController: ThemeController(),
       ),
     );

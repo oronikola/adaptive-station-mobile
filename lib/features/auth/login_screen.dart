@@ -1,18 +1,27 @@
 import 'package:flutter/material.dart';
 
 import '../../data/api_client.dart';
+import '../../data/auth_api.dart';
+import '../../data/gateway_sender_repository.dart';
 import '../../data/parent_repository.dart';
 import '../../design/components.dart';
 import '../../services/push_notification_service.dart';
 
+/// Shared by both account types — a parent (school code + email + password)
+/// and a gateway-sender device (username + password, school code left
+/// blank). Which one a login resolves to is decided server-side by whether
+/// `school_code` was sent at all; this screen never asks the person to pick
+/// a role up front.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
     super.key,
-    required this.repository,
+    required this.parentRepository,
+    required this.gatewayRepository,
     required this.onLoggedIn,
   });
-  final ParentRepository repository;
-  final VoidCallback onLoggedIn;
+  final ParentRepository parentRepository;
+  final GatewaySenderRepository gatewayRepository;
+  final ValueChanged<SessionRole> onLoggedIn;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -21,15 +30,16 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _schoolCodeController = TextEditingController();
-  final _emailController = TextEditingController();
+  final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _authApi = AuthApi();
   bool _submitting = false;
   String? _error;
 
   @override
   void dispose() {
     _schoolCodeController.dispose();
-    _emailController.dispose();
+    _identifierController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -43,22 +53,34 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await widget.repository.login(
+      final result = await _authApi.login(
         schoolCode: _schoolCodeController.text.trim(),
-        email: _emailController.text.trim(),
+        identifier: _identifierController.text.trim(),
         password: _passwordController.text,
       );
 
-      PushNotificationService.attachRepository(widget.repository);
-      final token = PushNotificationService.lastKnownToken;
-      if (token != null) {
-        // Push registration is best-effort — a parent should still be able
-        // to use the app if this single call fails.
-        widget.repository.registerDeviceToken(token).catchError((_) {});
+      if (result.role == SessionRole.parent) {
+        await widget.parentRepository.saveSession(
+          result.token,
+          result.parentProfile,
+        );
+
+        // Push registration is parent-only, and best-effort — a parent
+        // should still be able to use the app if this single call fails.
+        PushNotificationService.attachRepository(widget.parentRepository);
+        final token = PushNotificationService.lastKnownToken;
+        if (token != null) {
+          widget.parentRepository.registerDeviceToken(token).catchError((_) {});
+        }
+      } else {
+        await widget.gatewayRepository.saveSession(
+          result.token,
+          result.deviceProfile,
+        );
       }
 
       if (!mounted) return;
-      widget.onLoggedIn();
+      widget.onLoggedIn(result.role);
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
@@ -92,28 +114,29 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Log in with the school code and details your school gave you.',
+                    'Parents: log in with your school code, email, and password.\n'
+                    'Gateway devices: leave school code blank and use your device username.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 28),
                   TextFormField(
                     controller: _schoolCodeController,
                     textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(labelText: 'School code'),
-                    validator: (value) =>
-                        (value == null || value.trim().isEmpty)
-                        ? 'Enter your school code'
-                        : null,
+                    decoration: const InputDecoration(
+                      labelText: 'School code (parents only)',
+                    ),
                   ),
                   const SizedBox(height: 16),
                   TextFormField(
-                    controller: _emailController,
+                    controller: _identifierController,
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(labelText: 'Email'),
+                    decoration: const InputDecoration(
+                      labelText: 'Email or device username',
+                    ),
                     validator: (value) =>
                         (value == null || value.trim().isEmpty)
-                        ? 'Enter your email'
+                        ? 'Enter your email or username'
                         : null,
                   ),
                   const SizedBox(height: 16),

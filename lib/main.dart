@@ -1,6 +1,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'app_root.dart';
+import 'data/gateway_sender_repository.dart';
 import 'data/parent_repository.dart';
 import 'design/station_theme.dart';
 import 'services/push_notification_service.dart';
@@ -14,7 +15,8 @@ void main() async {
   await themeController.load();
   runApp(
     StationParentApp(
-      repository: ApiParentRepository(),
+      parentRepository: ApiParentRepository(),
+      gatewayRepository: GatewaySenderRepository(),
       themeController: themeController,
     ),
   );
@@ -23,22 +25,28 @@ void main() async {
 class StationParentApp extends StatelessWidget {
   const StationParentApp({
     super.key,
-    required this.repository,
+    required this.parentRepository,
+    required this.gatewayRepository,
     required this.themeController,
   });
-  final ParentRepository repository;
+  final ParentRepository parentRepository;
+  final GatewaySenderRepository gatewayRepository;
   final ThemeController themeController;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
     valueListenable: themeController,
     builder: (context, mode, _) => MaterialApp(
-      title: 'Adaptive Station Parent',
+      title: 'Adaptive Station',
       debugShowCheckedModeBanner: false,
       theme: StationTheme.light,
       darkTheme: StationTheme.dark,
       themeMode: mode,
-      home: AppRoot(repository: repository, themeController: themeController),
+      home: AppRoot(
+        parentRepository: parentRepository,
+        gatewayRepository: gatewayRepository,
+        themeController: themeController,
+      ),
     ),
   );
 }

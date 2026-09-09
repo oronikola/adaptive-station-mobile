@@ -36,6 +36,11 @@ class FakeParentRepository implements ParentRepository {
   }
 
   @override
+  Future<void> saveSession(String token, Map<String, dynamic>? profile) async {
+    loggedIn = true;
+  }
+
+  @override
   Future<void> logout() async {
     loggedIn = false;
   }

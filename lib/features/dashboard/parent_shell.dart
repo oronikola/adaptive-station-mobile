@@ -427,7 +427,7 @@ class _ParentShellState extends State<ParentShell> {
                                       )
                                     : const StationBrand(),
                               ),
-                              _ThemeToggleButton(
+                              ThemeToggleButton(
                                 themeController: widget.themeController,
                               ),
                             ],
@@ -1008,35 +1008,3 @@ class _ParentShellState extends State<ParentShell> {
   );
 }
 
-/// Header action that toggles strictly between light and dark (never
-/// system) — the Account tab's segmented control is still where "System" is
-/// chosen. Reflects whatever theme is actually active via `Theme.of(context)`
-/// (which already rebuilds when [ThemeController] changes the app's
-/// resolved brightness), so this needs no listener of its own.
-class _ThemeToggleButton extends StatelessWidget {
-  const _ThemeToggleButton({required this.themeController});
-  final ThemeController themeController;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return IconButton(
-      tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
-      onPressed: () {
-        HapticFeedback.lightImpact();
-        themeController.setMode(isDark ? ThemeMode.light : ThemeMode.dark);
-      },
-      icon: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 300),
-        transitionBuilder: (child, animation) => ScaleTransition(
-          scale: animation,
-          child: FadeTransition(opacity: animation, child: child),
-        ),
-        child: Icon(
-          isDark ? LucideIcons.sun : LucideIcons.moon,
-          key: ValueKey(isDark),
-        ),
-      ),
-    );
-  }
-}

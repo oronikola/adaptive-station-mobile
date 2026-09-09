@@ -1,6 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+import '../services/theme_controller.dart';
 import 'station_theme.dart';
 
 /// A flat, minimalist container: a solid surface fill, a hairline border,
@@ -389,6 +392,42 @@ class StationBrand extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Header action that toggles strictly between light and dark (never
+/// system) — a caller with a segmented System/Light/Dark control elsewhere
+/// (e.g. the parent dashboard's Account tab) leaves "System" reachable only
+/// there. Reflects whatever theme is actually active via `Theme.of(context)`
+/// (which already rebuilds when [ThemeController] changes the app's
+/// resolved brightness), so this needs no listener of its own. Shared by
+/// every shell (parent dashboard, gateway-sender) rather than duplicated
+/// per screen.
+class ThemeToggleButton extends StatelessWidget {
+  const ThemeToggleButton({super.key, required this.themeController});
+  final ThemeController themeController;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return IconButton(
+      tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
+      onPressed: () {
+        HapticFeedback.lightImpact();
+        themeController.setMode(isDark ? ThemeMode.light : ThemeMode.dark);
+      },
+      icon: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        transitionBuilder: (child, animation) => ScaleTransition(
+          scale: animation,
+          child: FadeTransition(opacity: animation, child: child),
+        ),
+        child: Icon(
+          isDark ? LucideIcons.sun : LucideIcons.moon,
+          key: ValueKey(isDark),
+        ),
+      ),
     );
   }
 }
