@@ -27,6 +27,7 @@ class _SendRecord {
     required this.message,
     required this.status,
     required this.timestamp,
+    required this.simLabel,
   });
   final String id;
   final String phoneNumber;
@@ -34,15 +35,34 @@ class _SendRecord {
   _SendStatus status;
   DateTime timestamp;
   String? error;
+  final String simLabel;
 }
 
-/// Gateway-sender mode's whole screen: claims a batch from the shared
-/// sms_outbox pool, sends each message via whichever SIM's turn it is, and
-/// reports status back immediately per message (not batched at the end —
-/// that's what makes the backend's reclaim lease and live fleet stats
-/// meaningful), then keeps listening for the carrier's delivery report on
-/// each one. See IP-007 (adaptive-station) for the server-side design and
-/// the device-app contract this implements.
+/// Gateway-sender mode's whole screen: runs one independent claim/send/report
+/// loop PER SIM CARD (not one shared loop round-robining between them), and
+/// keeps listening for the carrier's delivery report on every sent message.
+/// See IP-007 (adaptive-station) for the server-side design and the
+/// device-app contract this implements.
+///
+/// Why per-SIM, not one shared loop: the 10s delay between sends exists to
+/// stay under a carrier's per-number spam-detection threshold — a budget
+/// the carrier tracks per phone number, not per phone. Two SIMs are two
+/// distinct numbers with two independent budgets, so serializing them behind
+/// one shared delay (the original design) wasted the second SIM entirely: a
+/// dual-SIM phone sent no faster than a single-SIM one. Running one loop per
+/// SIM lets both send concurrently, each governed only by its own delay —
+/// roughly doubling a phone's real throughput with hardware already sitting
+/// idle. This is safe on typical DSDS (dual-SIM-dual-standby) hardware:
+/// sending an SMS is a brief signaling-plane transaction, not a sustained
+/// call/data session, and Android's telephony stack already queues/
+/// interleaves short per-SIM radio transactions transparently — the same
+/// thing that lets a phone receive a text on one SIM while sending on the
+/// other during ordinary dual-SIM use.
+///
+/// `claimBatch()` on the backend was already built for many independent,
+/// concurrent callers (SKIP LOCKED) — every phone in a 20+ device fleet
+/// already claims from the same shared pool this way, so treating a second
+/// SIM as one more independent worker needs no backend change at all.
 ///
 /// Deliberately much simpler than the standalone dual_sim_sms_Android14 app
 /// it replaces: no per-school selection (the whole point of the global
@@ -74,7 +94,6 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   StreamSubscription<SmsDeliveryReport>? _deliverySubscription;
   bool _running = false;
   bool _permissionsGranted = false;
-  int _nextSimIndex = 0;
   int _sentCount = 0;
   int _deliveredCount = 0;
   int _failedCount = 0;
@@ -158,7 +177,11 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       notificationText: 'Claiming and sending pending tap alerts.',
     );
 
-    unawaited(_loop());
+    // One independent loop per SIM — see the class docblock for why this is
+    // both safe and the actual fix for a dual-SIM phone's real throughput.
+    for (final sim in _simCards) {
+      unawaited(_loopForSim(sim));
+    }
   }
 
   Future<void> _stop() async {
@@ -168,7 +191,9 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _loop() async {
+  Future<void> _loopForSim(SimCard sim) async {
+    final simLabel = 'SIM ${sim.slotIndex + 1}';
+
     while (_running) {
       try {
         final messages = await widget.repository.claim(
@@ -189,13 +214,11 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
             message: message.message,
             status: _SendStatus.sending,
             timestamp: DateTime.now(),
+            simLabel: simLabel,
           );
           _records.insert(0, record);
           if (_records.length > _maxRecords) _records.removeLast();
           if (mounted) setState(() {});
-
-          final sim = _simCards[_nextSimIndex % _simCards.length];
-          _nextSimIndex++;
 
           final result = await SimSmsSender.send(
             subscriptionId: sim.subscriptionId,
@@ -219,8 +242,10 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
 
           if (mounted) setState(() {});
 
-          // Carrier spam-detection throttle, not an Android limitation —
-          // see IP-007's device-app contract for why this should eventually
+          // Carrier spam-detection throttle, not an Android limitation — a
+          // budget the carrier tracks per SIM/number, so each SIM's loop
+          // waits out its own delay independently of the other SIM's. See
+          // IP-007's device-app contract for why this should eventually
           // become server-configurable rather than a fixed constant.
           await Future.delayed(_perSimSendDelay);
         }
@@ -531,9 +556,18 @@ class _RecipientRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  record.phoneNumber,
-                  style: StationFonts.mono(fontSize: 13, color: palette.heading, fontWeight: FontWeight.w600),
+                Row(
+                  children: [
+                    Text(
+                      record.phoneNumber,
+                      style: StationFonts.mono(fontSize: 13, color: palette.heading, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '· ${record.simLabel}',
+                      style: StationFonts.mono(fontSize: 10.5, color: palette.muted),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 2),
                 Text(

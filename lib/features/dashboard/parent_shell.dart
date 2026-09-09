@@ -909,59 +909,7 @@ class _ParentShellState extends State<ParentShell> {
               ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 12),
-            ValueListenableBuilder<ThemeMode>(
-              valueListenable: widget.themeController,
-              builder: (context, mode, _) => SizedBox(
-                width: double.infinity,
-                child: SegmentedButton<ThemeMode>(
-                  showSelectedIcon: false,
-                  style: SegmentedButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                  ),
-                  segments: const [
-                    ButtonSegment(
-                      value: ThemeMode.system,
-                      label: Text(
-                        'System',
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.visible,
-                        style: TextStyle(fontSize: 12.5),
-                      ),
-                      icon: Icon(Icons.brightness_auto_rounded, size: 16),
-                    ),
-                    ButtonSegment(
-                      value: ThemeMode.light,
-                      label: Text(
-                        'Light',
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.visible,
-                        style: TextStyle(fontSize: 12.5),
-                      ),
-                      icon: Icon(Icons.light_mode_rounded, size: 16),
-                    ),
-                    ButtonSegment(
-                      value: ThemeMode.dark,
-                      label: Text(
-                        'Dark',
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.visible,
-                        style: TextStyle(fontSize: 12.5),
-                      ),
-                      icon: Icon(Icons.dark_mode_rounded, size: 16),
-                    ),
-                  ],
-                  selected: {mode},
-                  onSelectionChanged: (selection) {
-                    HapticFeedback.lightImpact();
-                    widget.themeController.setMode(selection.first);
-                  },
-                ),
-              ),
-            ),
+            ThemeModeSelector(themeController: widget.themeController),
           ],
         ),
       ),

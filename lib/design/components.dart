@@ -431,3 +431,111 @@ class ThemeToggleButton extends StatelessWidget {
     );
   }
 }
+
+/// The Account tab's full System/Light/Dark theme picker — a custom
+/// icon-only sliding pill (an iOS-segmented-control look) rather than
+/// Flutter's stock [SegmentedButton], which reads as a generic Material
+/// widget out of place in this app's minimalist design language. The active
+/// icon's backing pill slides between positions instead of the whole
+/// control repainting, and colors are theme-aware (both light and dark)
+/// rather than following the OS's own light/dark split, since a person
+/// picking "Dark" while their OS is in light mode still needs to read this
+/// control correctly against whichever brightness has already taken effect.
+class ThemeModeSelector extends StatelessWidget {
+  const ThemeModeSelector({super.key, required this.themeController});
+  final ThemeController themeController;
+
+  static const _modes = [ThemeMode.system, ThemeMode.light, ThemeMode.dark];
+  static const _icons = [LucideIcons.smartphone, LucideIcons.sun, LucideIcons.moon];
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = StationPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeController,
+      builder: (context, mode, _) {
+        final selectedIndex = _modes.indexOf(mode);
+
+        return Container(
+          height: 44,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF111827) : Colors.grey.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(50),
+          ),
+          child: Stack(
+            children: [
+              AnimatedAlign(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeInOutCubic,
+                alignment: Alignment(-1 + selectedIndex.toDouble(), 0),
+                child: FractionallySizedBox(
+                  widthFactor: 1 / _modes.length,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF374151) : Colors.white,
+                      borderRadius: BorderRadius.circular(50),
+                      boxShadow: isDark
+                          ? const []
+                          : [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.10),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                    ),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  for (var i = 0; i < _modes.length; i++)
+                    Expanded(
+                      child: _ThemeModeOption(
+                        icon: _icons[i],
+                        selected: i == selectedIndex,
+                        color: i == selectedIndex ? palette.heading : palette.muted,
+                        onTap: () {
+                          HapticFeedback.lightImpact();
+                          themeController.setMode(_modes[i]);
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ThemeModeOption extends StatelessWidget {
+  const _ThemeModeOption({
+    required this.icon,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+  final IconData icon;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(50),
+      child: SizedBox(
+        height: double.infinity,
+        child: Center(child: Icon(icon, size: 18, color: color)),
+      ),
+    ),
+  );
+}
