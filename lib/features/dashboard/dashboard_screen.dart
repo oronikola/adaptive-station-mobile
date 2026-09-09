@@ -315,6 +315,10 @@ class _ChildAvatarStripItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = StationPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scaffoldBg = Theme.of(context).scaffoldBackgroundColor;
+    final avatarBg = isDark ? palette.surface : palette.inset;
+
     return GestureDetector(
       onTap: onTap,
       child: SizedBox(
@@ -322,27 +326,62 @@ class _ChildAvatarStripItem extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            AnimatedContainer(
+            AnimatedScale(
+              scale: selected ? 1.05 : 0.95,
               duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: selected
-                      ? palette.blue
-                      : (isIn ? palette.green : palette.border),
-                  width: selected ? 2.5 : 2,
-                ),
-              ),
+              curve: Curves.easeOutCubic,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  StationAvatar(initials: student.initials),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    width: 54,
+                    height: 54,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: avatarBg,
+                      border: selected
+                          ? Border.all(color: palette.heading, width: 2)
+                          : Border.all(color: palette.border, width: 0.5),
+                    ),
+                    child: Center(
+                      child: Text(
+                        student.initials,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: palette.heading,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          height: 1.0,
+                        ),
+                      ),
+                    ),
+                  ),
                   if (isIn)
                     Positioned(
-                      right: -7,
-                      bottom: -7,
-                      child: RadarPulse(color: palette.green, size: 11, ringCount: 2),
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: scaffoldBg,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: scaffoldBg,
+                            width: 2,
+                          ),
+                        ),
+                        child: Center(
+                          child: RadarPulse(
+                            color: palette.green,
+                            size: 4,
+                            ringCount: 1,
+                          ),
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -354,7 +393,7 @@ class _ChildAvatarStripItem extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 11,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 color: selected ? palette.heading : palette.muted,
               ),
             ),
