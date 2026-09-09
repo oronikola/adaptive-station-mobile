@@ -258,18 +258,46 @@ class StationBottomNav extends StatelessWidget {
               borderRadius: BorderRadius.circular(radius),
               border: Border.all(color: palette.border),
             ),
-            child: Row(
-              children: [
-                for (var i = 0; i < destinations.length; i++)
-                  Expanded(
-                    child: _StationNavItem(
-                      destination: destinations[i],
-                      selected: i == selectedIndex,
-                      badgeCount: badgeCounts[i] ?? 0,
-                      onTap: () => onDestinationSelected(i),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final itemCount = destinations.length;
+                final itemWidth = itemCount > 0 ? constraints.maxWidth / itemCount : 0.0;
+
+                return Stack(
+                  children: [
+                    // Fluid sliding active indicator pill
+                    if (itemCount > 0)
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 280),
+                        curve: Curves.easeOutCubic,
+                        left: selectedIndex * itemWidth + 4,
+                        top: 10,
+                        bottom: 10,
+                        width: (itemWidth - 8).clamp(0.0, double.infinity),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: palette.inset,
+                            borderRadius: BorderRadius.circular(50),
+                          ),
+                        ),
+                      ),
+                    // Navigation items row
+                    Row(
+                      children: [
+                        for (var i = 0; i < destinations.length; i++)
+                          Expanded(
+                            child: _StationNavItem(
+                              destination: destinations[i],
+                              selected: i == selectedIndex,
+                              badgeCount: badgeCounts[i] ?? 0,
+                              onTap: () => onDestinationSelected(i),
+                            ),
+                          ),
+                      ],
                     ),
-                  ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -298,13 +326,10 @@ class _StationNavItem extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         customBorder: const StadiumBorder(),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
+        child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected ? palette.inset : Colors.transparent,
             borderRadius: BorderRadius.circular(50),
           ),
           child: Badge(
@@ -312,10 +337,16 @@ class _StationNavItem extends StatelessWidget {
             label: Text(badgeCount > 9 ? '9+' : '$badgeCount'),
             backgroundColor: palette.blue,
             textColor: palette.onAccent,
-            child: Icon(
-              destination.icon,
-              size: 22,
-              color: selected ? palette.heading : palette.muted,
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 200),
+              style: TextStyle(
+                color: selected ? palette.heading : palette.muted,
+              ),
+              child: Icon(
+                destination.icon,
+                size: 22,
+                color: selected ? palette.heading : palette.muted,
+              ),
             ),
           ),
         ),

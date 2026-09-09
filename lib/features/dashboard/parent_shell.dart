@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -509,50 +510,103 @@ class _ParentShellState extends State<ParentShell> {
       );
     }
 
-    // Attendance renders its own lazily-built CustomScrollView (see
-    // _attendance) instead of sharing this SingleChildScrollView — grouped
-    // history can grow large, and nesting it inside another scrollable would
-    // defeat ListView.builder's lazy building.
-    if (_destination == 1) {
-      return RefreshIndicator(
-        onRefresh: _load,
-        child: _attendance(tablet, navClearance),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: SingleChildScrollView(
-        key: ValueKey('page-$_destination'),
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(
-          tablet ? 32 : 20,
-          tablet ? 32 : 20,
-          tablet ? 32 : 20,
-          (tablet ? 32 : 20) + navClearance,
-        ),
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1100),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_destination == 0)
-                  DashboardScreen(
-                    children: _children,
-                    recentTaps: _taps,
-                    onHistory: () => _navigate(1),
-                    onChild: (student) => _navigate(1, studentId: student.id),
-                  ),
-                if (_destination == 2) _updates(context),
-                if (_destination == 3) _account(context),
-              ],
-            ),
-          ),
-        ),
+    return PageTransitionSwitcher(
+      duration: const Duration(milliseconds: 300),
+      transitionBuilder: (child, primaryAnimation, secondaryAnimation) {
+        return FadeThroughTransition(
+          animation: primaryAnimation,
+          secondaryAnimation: secondaryAnimation,
+          child: child,
+        );
+      },
+      child: KeyedSubtree(
+        key: ValueKey<int>(_destination),
+        child: _buildPage(_destination, tablet, navClearance),
       ),
     );
+  }
+
+  Widget _buildPage(int index, bool tablet, double navClearance) {
+    switch (index) {
+      case 0:
+        return RefreshIndicator(
+          key: const PageStorageKey('refresh-home'),
+          onRefresh: _load,
+          child: SingleChildScrollView(
+            key: const PageStorageKey('scroll-home'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(
+              tablet ? 32 : 20,
+              tablet ? 32 : 20,
+              tablet ? 32 : 20,
+              (tablet ? 32 : 20) + navClearance,
+            ),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1100),
+                child: DashboardScreen(
+                  children: _children,
+                  recentTaps: _taps,
+                  onHistory: () => _navigate(1),
+                  onChild: (student) => _navigate(1, studentId: student.id),
+                ),
+              ),
+            ),
+          ),
+        );
+      case 1:
+        return RefreshIndicator(
+          key: const PageStorageKey('refresh-attendance'),
+          onRefresh: _load,
+          child: _attendance(tablet, navClearance),
+        );
+      case 2:
+        return RefreshIndicator(
+          key: const PageStorageKey('refresh-updates'),
+          onRefresh: _load,
+          child: SingleChildScrollView(
+            key: const PageStorageKey('scroll-updates'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(
+              tablet ? 32 : 20,
+              tablet ? 32 : 20,
+              tablet ? 32 : 20,
+              (tablet ? 32 : 20) + navClearance,
+            ),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1100),
+                child: _updates(context),
+              ),
+            ),
+          ),
+        );
+      case 3:
+      default:
+        return RefreshIndicator(
+          key: const PageStorageKey('refresh-account'),
+          onRefresh: _load,
+          child: SingleChildScrollView(
+            key: const PageStorageKey('scroll-account'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(
+              tablet ? 32 : 20,
+              tablet ? 32 : 20,
+              tablet ? 32 : 20,
+              (tablet ? 32 : 20) + navClearance,
+            ),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1100),
+                child: _account(context),
+              ),
+            ),
+          ),
+        );
+    }
   }
 
   Widget _title(BuildContext context, String title, String subtitle) => Padding(
@@ -584,7 +638,7 @@ class _ParentShellState extends State<ParentShell> {
     );
 
     return CustomScrollView(
-      key: const ValueKey('page-1'),
+      key: const PageStorageKey('scroll-attendance'),
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
         SliverToBoxAdapter(
