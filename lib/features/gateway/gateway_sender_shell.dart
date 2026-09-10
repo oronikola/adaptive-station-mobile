@@ -11,6 +11,7 @@ import '../../data/api_client.dart';
 import '../../data/gateway_sender_repository.dart';
 import '../../design/components.dart';
 import '../../design/station_theme.dart';
+import '../../services/gateway_realtime_service.dart';
 import '../../services/sim_sms_sender.dart';
 import '../../services/theme_controller.dart';
 
@@ -98,10 +99,24 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   int _deliveredCount = 0;
   int _failedCount = 0;
 
+  // Lets an idle _loopForSim() skip the rest of its poll wait the instant
+  // the server broadcasts "a message was just queued" (see
+  // GatewayRealtimeService/App\Events\SmsGatewayWakeUp) instead of always
+  // waiting out the full interval. Purely a latency shortcut: the actual
+  // claim still goes through the same HTTP call either way, so a missed or
+  // stale wake-up event is harmless — the poll loop is still the fallback.
+  final _wakeEvents = StreamController<void>.broadcast();
+  GatewayRealtimeService? _realtime;
+
   @override
   void initState() {
     super.initState();
     _deliverySubscription = SimSmsSender.deliveryReports.listen(_onDeliveryReport);
+    _realtime = GatewayRealtimeService(
+      host: ApiConfig.realtimeHost,
+      port: ApiConfig.realtimePort,
+      appKey: ApiConfig.realtimeAppKey,
+    )..connect(() => _wakeEvents.add(null));
     _bootstrap();
   }
 
@@ -109,6 +124,8 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   void dispose() {
     _running = false;
     _deliverySubscription?.cancel();
+    _realtime?.disconnect();
+    unawaited(_wakeEvents.close());
     unawaited(WakelockPlus.disable());
     unawaited(FlutterForegroundTask.stopService());
     super.dispose();
@@ -191,6 +208,18 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     if (mounted) setState(() {});
   }
 
+  /// Waits for whichever comes first: the normal poll interval, or the next
+  /// server wake-up broadcast. A stream error (e.g. the controller closing
+  /// mid-wait, during dispose) is left to propagate to _loopForSim's own
+  /// try/catch rather than handled here — that catch already exists for
+  /// exactly this kind of "something interrupted the wait" case.
+  Future<void> _waitForWakeUpOrPollInterval() {
+    return Future.any([
+      Future.delayed(_pollInterval),
+      _wakeEvents.stream.first,
+    ]);
+  }
+
   Future<void> _loopForSim(SimCard sim) async {
     final simLabel = 'SIM ${sim.slotIndex + 1}';
 
@@ -201,7 +230,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
         );
 
         if (messages.isEmpty) {
-          await Future.delayed(_pollInterval);
+          await _waitForWakeUpOrPollInterval();
           continue;
         }
 
