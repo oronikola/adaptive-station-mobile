@@ -208,6 +208,28 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     if (mounted) setState(() {});
   }
 
+  // Guards against every SIM's loop hitting the same 401 at once (they all
+  // poll independently) and each trying to log out / show the snackbar.
+  bool _handlingUnauthorized = false;
+
+  /// GatewayApiClient already clears the stored token and throws this for a
+  /// 401 — previously that was swallowed by _loopForSim's catch-all, so a
+  /// revoked/expired device credential left the screen silently retrying
+  /// forever, still showing "LIVE", with no way for whoever's holding the
+  /// phone to know it needed a fresh login.
+  Future<void> _handleUnauthorized() async {
+    if (_handlingUnauthorized) return;
+    _handlingUnauthorized = true;
+
+    await _stop();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session expired. Please log in again.')),
+      );
+    }
+    widget.onLoggedOut();
+  }
+
   /// Waits for whichever comes first: the normal poll interval, or the next
   /// server wake-up broadcast. A stream error (e.g. the controller closing
   /// mid-wait, during dispose) is left to propagate to _loopForSim's own
@@ -278,6 +300,12 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
           // become server-configurable rather than a fixed constant.
           await Future.delayed(_perSimSendDelay);
         }
+      } on ApiException catch (e) {
+        if (e.statusCode == 401) {
+          await _handleUnauthorized();
+          return;
+        }
+        await Future.delayed(_pollInterval);
       } catch (_) {
         await Future.delayed(_pollInterval);
       }
