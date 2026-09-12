@@ -13,6 +13,9 @@ class FakeGatewaySenderRepository implements GatewaySenderRepository {
   final List<String> reportedSent = [];
   final List<(String, String)> reportedFailed = [];
   final List<String> reportedDelivered = [];
+  final List<int?> reportedSentSimSlots = [];
+  final List<int?> reportedFailedSimSlots = [];
+  final List<int?> reportedDeliveredSimSlots = [];
   int claimCalls = 0;
   bool loggedIn = true;
 
@@ -58,17 +61,24 @@ class FakeGatewaySenderRepository implements GatewaySenderRepository {
   }
 
   @override
-  Future<void> reportSent(String messageId) async {
+  Future<void> reportSent(String messageId, {int? simSlot}) async {
     reportedSent.add(messageId);
+    reportedSentSimSlots.add(simSlot);
   }
 
   @override
-  Future<void> reportFailed(String messageId, String error) async {
+  Future<void> reportFailed(
+    String messageId,
+    String error, {
+    int? simSlot,
+  }) async {
     reportedFailed.add((messageId, error));
+    reportedFailedSimSlots.add(simSlot);
   }
 
   @override
-  Future<void> reportDelivered(String messageId) async {
+  Future<void> reportDelivered(String messageId, {int? simSlot}) async {
     reportedDelivered.add(messageId);
+    reportedDeliveredSimSlots.add(simSlot);
   }
 }

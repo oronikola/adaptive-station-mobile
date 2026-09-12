@@ -30,6 +30,7 @@ class _SendRecord {
     required this.status,
     required this.timestamp,
     required this.simLabel,
+    required this.slotIndex,
   });
   final String id;
   final String phoneNumber;
@@ -38,6 +39,10 @@ class _SendRecord {
   DateTime timestamp;
   String? error;
   final String simLabel;
+  /// The phone's own SIM slot index (0 or 1) — reported to the backend
+  /// alongside sent/failed/delivered so it can track a daily send cap per
+  /// SIM, not just per phone.
+  final int slotIndex;
 }
 
 /// Gateway-sender mode's whole screen: runs one independent claim/send/report
@@ -243,7 +248,9 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       _deliveredCount++;
       // Not every carrier sends a delivery report at all — reportDelivered
       // is best-effort; a failure here shouldn't roll back the local status.
-      widget.repository.reportDelivered(report.messageId).catchError((_) {});
+      widget.repository
+          .reportDelivered(report.messageId, simSlot: record.slotIndex)
+          .catchError((_) {});
     } else {
       record.status = _SendStatus.notDelivered;
       record.timestamp = DateTime.now();
@@ -341,6 +348,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
             status: _SendStatus.sending,
             timestamp: DateTime.now(),
             simLabel: simLabel,
+            slotIndex: sim.slotIndex,
           );
           _records.insert(0, record);
           if (_records.length > _maxRecords) _records.removeLast();
@@ -354,12 +362,19 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
           );
 
           if (result == 'sent') {
-            await widget.repository.reportSent(message.id);
+            await widget.repository.reportSent(
+              message.id,
+              simSlot: sim.slotIndex,
+            );
             record.status = _SendStatus.sent;
             _sentCount++;
           } else {
             final error = result.replaceFirst('error: ', '');
-            await widget.repository.reportFailed(message.id, error);
+            await widget.repository.reportFailed(
+              message.id,
+              error,
+              simSlot: sim.slotIndex,
+            );
             record.status = _SendStatus.failed;
             record.error = error;
             _failedCount++;

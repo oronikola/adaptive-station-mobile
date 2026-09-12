@@ -88,6 +88,9 @@ void main() {
     expect(find.text('Sent'), findsNWidgets(2));
     expect(find.textContaining('+639171111111'), findsOneWidget);
     expect(repository.reportedSent, ['m1']);
+    // _testSim.slotIndex is 0 — reported alongside the send so the backend
+    // can track a daily cap per SIM, not just per phone.
+    expect(repository.reportedSentSimSlots, [0]);
     expect(smsSender.sentMessages, hasLength(1));
     expect(smsSender.sentMessages.first['phoneNumber'], '+639171111111');
 
@@ -108,6 +111,7 @@ void main() {
     expect(find.text('Failed'), findsNWidgets(2)); // stat-card label + status pill
     expect(find.text('no service'), findsOneWidget);
     expect(repository.reportedFailed, [('m2', 'no service')]);
+    expect(repository.reportedFailedSimSlots, [0]);
 
     await _disposeAndSettle(tester);
   });
@@ -133,6 +137,7 @@ void main() {
     expect(find.text('Sent'), findsOneWidget);
     expect(find.text('Delivered'), findsNWidgets(2));
     expect(repository.reportedDelivered, ['m3']);
+    expect(repository.reportedDeliveredSimSlots, [0]);
 
     await _disposeAndSettle(tester);
   });
@@ -205,6 +210,10 @@ void main() {
     expect(repository.reportedSent, containsAll(['m4', 'm5']));
     final usedSubscriptions = smsSender.sentMessages.map((m) => m['subscriptionId']).toSet();
     expect(usedSubscriptions, {'1', '2'});
+    // Each SIM reports its own slotIndex (0 and 1), not both messages
+    // reporting the same one — this is the whole point of tracking a daily
+    // send cap per SIM rather than per phone.
+    expect(repository.reportedSentSimSlots.toSet(), {0, 1});
 
     await _disposeAndSettle(tester);
   });

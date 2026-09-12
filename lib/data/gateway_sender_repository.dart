@@ -36,14 +36,20 @@ abstract class GatewaySenderRepository {
 
   Future<List<GatewayMessage>> claim({int batchSize = 20});
 
-  Future<void> reportSent(String messageId);
+  /// [simSlot] is the phone's own SIM slot index (0 or 1 on a dual-SIM
+  /// device) the message was actually sent from — lets the backend track a
+  /// daily send cap per SIM, not just per phone (a phone has two
+  /// independently-capped carrier SIMs). Optional so a caller that doesn't
+  /// know it (shouldn't happen in practice, but keeps the API forgiving)
+  /// still gets a valid request.
+  Future<void> reportSent(String messageId, {int? simSlot});
 
-  Future<void> reportFailed(String messageId, String error);
+  Future<void> reportFailed(String messageId, String error, {int? simSlot});
 
   /// Reported once the carrier's delivery report arrives via
   /// [SimSmsSender.deliveryReports] — independent of, and usually later
   /// than, the original [reportSent] call for the same message.
-  Future<void> reportDelivered(String messageId);
+  Future<void> reportDelivered(String messageId, {int? simSlot});
 }
 
 class ApiGatewaySenderRepository implements GatewaySenderRepository {
@@ -102,16 +108,23 @@ class ApiGatewaySenderRepository implements GatewaySenderRepository {
   }
 
   @override
-  Future<void> reportSent(String messageId) =>
-      _client.post('/messages/$messageId/status', {'status': 'sent'});
-
-  @override
-  Future<void> reportFailed(String messageId, String error) => _client.post(
+  Future<void> reportSent(String messageId, {int? simSlot}) => _client.post(
     '/messages/$messageId/status',
-    {'status': 'failed', 'error': error},
+    {'status': 'sent', if (simSlot != null) 'sim_slot': simSlot},
   );
 
   @override
-  Future<void> reportDelivered(String messageId) =>
-      _client.post('/messages/$messageId/status', {'status': 'delivered'});
+  Future<void> reportFailed(String messageId, String error, {int? simSlot}) =>
+      _client.post('/messages/$messageId/status', {
+        'status': 'failed',
+        'error': error,
+        if (simSlot != null) 'sim_slot': simSlot,
+      });
+
+  @override
+  Future<void> reportDelivered(String messageId, {int? simSlot}) =>
+      _client.post('/messages/$messageId/status', {
+        'status': 'delivered',
+        if (simSlot != null) 'sim_slot': simSlot,
+      });
 }

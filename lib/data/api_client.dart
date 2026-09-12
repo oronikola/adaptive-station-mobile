@@ -10,7 +10,7 @@ import 'package:http/http.dart' as http;
 abstract final class ApiConfig {
   static const baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://station.adaptivehub.app/api/v1/parent',
+    defaultValue: 'http://10.0.0.102:8000/api/v1/parent',
   );
 
   /// Reverb connection details for the live tap-update WebSocket — the host
