@@ -19,18 +19,45 @@ class GatewayMessage {
 }
 
 /// Everything gateway-sender mode needs from the backend — the claim/send
-/// loop's data layer, parallel to ParentRepository. See IP-007 (adaptive-
-/// station) for the server-side design this talks to.
-class GatewaySenderRepository {
-  GatewaySenderRepository({GatewayApiClient? client})
+/// loop's data layer, parallel to ParentRepository. Implemented for real by
+/// [ApiGatewaySenderRepository]; tests use a fake implementation instead of
+/// hitting the network (see test/support/fake_gateway_sender_repository.dart).
+/// See IP-007 (adaptive-station) for the server-side design this talks to.
+abstract class GatewaySenderRepository {
+  String? get deviceLabel;
+
+  Future<bool> hasStoredSession();
+
+  /// Persists a token/profile already obtained from the shared login
+  /// screen's unified login call — mirrors ParentRepository.saveSession().
+  Future<void> saveSession(String token, Map<String, dynamic>? profile);
+
+  Future<void> logout();
+
+  Future<List<GatewayMessage>> claim({int batchSize = 20});
+
+  Future<void> reportSent(String messageId);
+
+  Future<void> reportFailed(String messageId, String error);
+
+  /// Reported once the carrier's delivery report arrives via
+  /// [SimSmsSender.deliveryReports] — independent of, and usually later
+  /// than, the original [reportSent] call for the same message.
+  Future<void> reportDelivered(String messageId);
+}
+
+class ApiGatewaySenderRepository implements GatewaySenderRepository {
+  ApiGatewaySenderRepository({GatewayApiClient? client})
     : _client = client ?? GatewayApiClient();
 
   final GatewayApiClient _client;
   String? _deviceId;
   String? _deviceLabel;
 
+  @override
   String? get deviceLabel => _deviceLabel;
 
+  @override
   Future<bool> hasStoredSession() async {
     final token = await _client.storedToken;
     if (token == null) return false;
@@ -44,8 +71,7 @@ class GatewaySenderRepository {
     return true;
   }
 
-  /// Persists a token/profile already obtained from the shared login
-  /// screen's unified login call — mirrors ParentRepository.saveSession().
+  @override
   Future<void> saveSession(String token, Map<String, dynamic>? profile) async {
     await _client.saveToken(token);
     _deviceId = profile?['id'] as String?;
@@ -55,6 +81,7 @@ class GatewaySenderRepository {
     }
   }
 
+  @override
   Future<void> logout() async {
     try {
       await _client.post('/logout');
@@ -67,23 +94,24 @@ class GatewaySenderRepository {
     _deviceLabel = null;
   }
 
+  @override
   Future<List<GatewayMessage>> claim({int batchSize = 20}) async {
     final response = await _client.post('/claim', {'batch_size': batchSize});
     final messages = (response['messages'] as List).cast<Map<String, dynamic>>();
     return messages.map(GatewayMessage.fromJson).toList();
   }
 
+  @override
   Future<void> reportSent(String messageId) =>
       _client.post('/messages/$messageId/status', {'status': 'sent'});
 
+  @override
   Future<void> reportFailed(String messageId, String error) => _client.post(
     '/messages/$messageId/status',
     {'status': 'failed', 'error': error},
   );
 
-  /// Reported once the carrier's delivery report arrives via
-  /// [SimSmsSender.deliveryReports] — independent of, and usually later
-  /// than, the original [reportSent] call for the same message.
+  @override
   Future<void> reportDelivered(String messageId) =>
       _client.post('/messages/$messageId/status', {'status': 'delivered'});
 }

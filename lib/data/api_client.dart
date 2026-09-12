@@ -10,7 +10,7 @@ import 'package:http/http.dart' as http;
 abstract final class ApiConfig {
   static const baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.0.102:8000/api/v1/parent',
+    defaultValue: 'https://station.adaptivehub.app/api/v1/parent',
   );
 
   /// Reverb connection details for the live tap-update WebSocket — the host
@@ -20,9 +20,16 @@ abstract final class ApiConfig {
   /// --dart-define=REVERB_PORT=... / REVERB_APP_KEY=... if that changes.
   static String get realtimeHost => Uri.parse(baseUrl).host;
 
+  /// wss:// for a real https:// deployment (Reverb sits behind an Nginx
+  /// TLS-terminating reverse proxy there — plaintext ws:// to a public host
+  /// is blocked by Android's default cleartext-traffic policy anyway), ws://
+  /// only for local http:// dev.
+  static String get realtimeScheme =>
+      Uri.parse(baseUrl).scheme == 'https' ? 'wss' : 'ws';
+
   static const realtimePort = int.fromEnvironment(
     'REVERB_PORT',
-    defaultValue: 8080,
+    defaultValue: 443,
   );
 
   static const realtimeAppKey = String.fromEnvironment(

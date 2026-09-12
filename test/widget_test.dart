@@ -30,7 +30,7 @@ void main() {
     await tester.pumpWidget(
       StationParentApp(
         parentRepository: FakeParentRepository(),
-        gatewayRepository: GatewaySenderRepository(),
+        gatewayRepository: ApiGatewaySenderRepository(),
         themeController: ThemeController(),
       ),
     );
@@ -63,7 +63,7 @@ void main() {
     await tester.pumpWidget(
       StationParentApp(
         parentRepository: FakeParentRepository(),
-        gatewayRepository: GatewaySenderRepository(),
+        gatewayRepository: ApiGatewaySenderRepository(),
         themeController: ThemeController(),
       ),
     );
@@ -88,7 +88,7 @@ void main() {
     await tester.pumpWidget(
       StationParentApp(
         parentRepository: FakeParentRepository(),
-        gatewayRepository: GatewaySenderRepository(),
+        gatewayRepository: ApiGatewaySenderRepository(),
         themeController: ThemeController(),
       ),
     );

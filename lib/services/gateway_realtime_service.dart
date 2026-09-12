@@ -4,28 +4,39 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-/// Hand-rolled Pusher-protocol client for the gateway-sender fleet's
-/// "sms.queued" wake-up nudge — sibling to [RealtimeService] (see
-/// lib/services/realtime_service.dart) but deliberately simpler: it
-/// subscribes to a single *public* channel (`sms-gateway`, see
-/// App\Events\SmsGatewayWakeUp on the backend), so there's no per-device
-/// channel authorization handshake to do at all, unlike the parent app's
-/// private `parent.{id}` channel.
+/// Lets GatewaySenderShell hear the server's "sms.queued" wake-up nudge
+/// without depending on a real WebSocket connection — an interface so tests
+/// can inject a fake that fires the callback on demand (see
+/// test/support/fake_gateway_realtime_service.dart). [WebSocketGatewayRealtimeService]
+/// is the one real implementation, used everywhere the app actually runs.
 ///
 /// This only ever shortens [GatewaySenderShell]'s poll wait when idle — the
 /// actual claim (`POST /claim`, backed by `FOR UPDATE SKIP LOCKED`) stays
 /// exactly as it was, so a missed or duplicate wake-up event is harmless:
 /// worst case, the device just falls back to its normal poll interval.
-class GatewayRealtimeService {
-  GatewayRealtimeService({
+abstract interface class GatewayRealtimeService {
+  void connect(VoidCallback onWakeUp);
+  void disconnect();
+}
+
+/// Hand-rolled Pusher-protocol client — sibling to [RealtimeService] (see
+/// lib/services/realtime_service.dart) but deliberately simpler: it
+/// subscribes to a single *public* channel (`sms-gateway`, see
+/// App\Events\SmsGatewayWakeUp on the backend), so there's no per-device
+/// channel authorization handshake to do at all, unlike the parent app's
+/// private `parent.{id}` channel.
+class WebSocketGatewayRealtimeService implements GatewayRealtimeService {
+  WebSocketGatewayRealtimeService({
     required this.host,
     required this.port,
     required this.appKey,
+    this.scheme = 'ws',
   });
 
   final String host;
   final int port;
   final String appKey;
+  final String scheme;
 
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -33,6 +44,7 @@ class GatewayRealtimeService {
   VoidCallback? _onWakeUp;
   bool _disposed = false;
 
+  @override
   void connect(VoidCallback onWakeUp) {
     _disposed = false;
     _onWakeUp = onWakeUp;
@@ -43,7 +55,7 @@ class GatewayRealtimeService {
     if (_disposed) return;
 
     final uri = Uri(
-      scheme: 'ws',
+      scheme: scheme,
       host: host,
       port: port,
       path: '/app/$appKey',
@@ -116,6 +128,7 @@ class GatewayRealtimeService {
     _reconnectTimer = Timer(const Duration(seconds: 5), _open);
   }
 
+  @override
   void disconnect() {
     _disposed = true;
     _reconnectTimer?.cancel();

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -75,10 +76,33 @@ class GatewaySenderShell extends StatefulWidget {
     required this.repository,
     required this.onLoggedOut,
     required this.themeController,
+    this.smsSender = const MethodChannelSimSmsSender(),
+    @visibleForTesting this.debugRealtimeService,
+    @visibleForTesting this.debugInitialSimCards,
   });
   final GatewaySenderRepository repository;
   final VoidCallback onLoggedOut;
   final ThemeController themeController;
+
+  /// Defaults to the real native-channel implementation everywhere the app
+  /// actually runs; tests inject a fake instead (see
+  /// test/support/fake_sim_sms_sender.dart) so the claim/send loop can be
+  /// exercised without a real SIM, radio, or carrier.
+  final SimSmsSender smsSender;
+
+  /// Test-only seam: overrides the real WebSocket wake-up client so a test
+  /// can trigger a wake-up event directly instead of needing a real Reverb
+  /// server (see test/support/fake_gateway_realtime_service.dart). Always
+  /// null in production — the real service is constructed internally.
+  @visibleForTesting
+  final GatewayRealtimeService? debugRealtimeService;
+
+  /// Test-only seam: when set, skips the real permission request and
+  /// SimDataPlugin.getSimData() call in _bootstrap() (both platform
+  /// channels a widget test can't satisfy) and starts the claim/send loop
+  /// directly against these SIM cards instead. Always null in production.
+  @visibleForTesting
+  final List<SimCard>? debugInitialSimCards;
 
   @override
   State<GatewaySenderShell> createState() => _GatewaySenderShellState();
@@ -111,12 +135,15 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   @override
   void initState() {
     super.initState();
-    _deliverySubscription = SimSmsSender.deliveryReports.listen(_onDeliveryReport);
-    _realtime = GatewayRealtimeService(
-      host: ApiConfig.realtimeHost,
-      port: ApiConfig.realtimePort,
-      appKey: ApiConfig.realtimeAppKey,
-    )..connect(() => _wakeEvents.add(null));
+    _deliverySubscription = widget.smsSender.deliveryReports.listen(_onDeliveryReport);
+    _realtime = widget.debugRealtimeService ??
+        WebSocketGatewayRealtimeService(
+          host: ApiConfig.realtimeHost,
+          port: ApiConfig.realtimePort,
+          appKey: ApiConfig.realtimeAppKey,
+          scheme: ApiConfig.realtimeScheme,
+        );
+    _realtime!.connect(() => _wakeEvents.add(null));
     _bootstrap();
   }
 
@@ -126,12 +153,47 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     _deliverySubscription?.cancel();
     _realtime?.disconnect();
     unawaited(_wakeEvents.close());
-    unawaited(WakelockPlus.disable());
-    unawaited(FlutterForegroundTask.stopService());
+    unawaited(_disableWakelockAndForegroundService());
     super.dispose();
   }
 
+  /// How long an OS-nicety platform call gets before it's given up on. A
+  /// missing handler throws promptly, but not every unavailable platform
+  /// channel behaves that way (observed: a widget test's WakelockPlus call
+  /// never resolves or rejects at all when no real platform is present) —
+  /// a bare try/catch doesn't protect against a call that simply never
+  /// completes, only a timeout does.
+  static const _osNicetyTimeout = Duration(seconds: 3);
+
+  /// Best-effort OS niceties (keep-screen-on + the persistent foreground
+  /// notification) — some environments (a widget test with no real
+  /// platform channel, an OEM skin without foreground-service support)
+  /// don't support one or both, and that must never block the actual
+  /// claim/send loop from starting or stopping.
+  Future<void> _disableWakelockAndForegroundService() async {
+    try {
+      await WakelockPlus.disable().timeout(_osNicetyTimeout);
+    } catch (_) {}
+    try {
+      await FlutterForegroundTask.stopService().timeout(_osNicetyTimeout);
+    } catch (_) {}
+  }
+
   Future<void> _bootstrap() async {
+    // Test-only seam (see the field's docblock): skips the two platform
+    // calls below entirely, since a widget test has no real permission
+    // dialog or SIM hardware to satisfy them.
+    final debugCards = widget.debugInitialSimCards;
+    if (debugCards != null) {
+      if (!mounted) return;
+      setState(() {
+        _permissionsGranted = true;
+        _simCards = debugCards;
+      });
+      if (debugCards.isNotEmpty) _start();
+      return;
+    }
+
     final smsStatus = await Permission.sms.request();
     final phoneStatus = await Permission.phone.request();
     final granted = smsStatus.isGranted && phoneStatus.isGranted;
@@ -141,9 +203,16 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       try {
         final simData = await SimDataPlugin.getSimData();
         cards = simData.cards;
-      } catch (_) {
+      } catch (e, stack) {
         // Surfaced below via the "No SIM cards detected" card instead of a
-        // record row — this isn't tied to any one message.
+        // record row — this isn't tied to any one message. Still reported
+        // non-fatally so a field device that never gets SIM data back isn't
+        // a total mystery after the fact.
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          reason: 'Failed to read SIM card data',
+        );
       }
     }
 
@@ -188,11 +257,18 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     _running = true;
     if (mounted) setState(() {});
 
-    await WakelockPlus.enable();
-    await FlutterForegroundTask.startService(
-      notificationTitle: 'Adaptive Station — SMS Gateway',
-      notificationText: 'Claiming and sending pending tap alerts.',
-    );
+    // Best-effort OS niceties — see _disableWakelockAndForegroundService's
+    // docblock for why either failing (or hanging) must not stop the actual
+    // work below.
+    try {
+      await WakelockPlus.enable().timeout(_osNicetyTimeout);
+    } catch (_) {}
+    try {
+      await FlutterForegroundTask.startService(
+        notificationTitle: 'Adaptive Station — SMS Gateway',
+        notificationText: 'Claiming and sending pending tap alerts.',
+      ).timeout(_osNicetyTimeout);
+    } catch (_) {}
 
     // One independent loop per SIM — see the class docblock for why this is
     // both safe and the actual fix for a dual-SIM phone's real throughput.
@@ -203,8 +279,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
 
   Future<void> _stop() async {
     _running = false;
-    await WakelockPlus.disable();
-    await FlutterForegroundTask.stopService();
+    await _disableWakelockAndForegroundService();
     if (mounted) setState(() {});
   }
 
@@ -271,7 +346,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
           if (_records.length > _maxRecords) _records.removeLast();
           if (mounted) setState(() {});
 
-          final result = await SimSmsSender.send(
+          final result = await widget.smsSender.send(
             subscriptionId: sim.subscriptionId,
             phoneNumber: message.phoneNumber,
             message: message.message,
@@ -306,7 +381,22 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
           return;
         }
         await Future.delayed(_pollInterval);
-      } catch (_) {
+      } catch (e, stack) {
+        // dispose() closes _wakeEvents while this loop may still be
+        // awaiting it (_waitForWakeUpOrPollInterval), which throws here —
+        // that's just shutdown, not a bug worth reporting, and _running is
+        // already false by the time it happens (dispose() sets it first).
+        if (!_running) return;
+
+        // Anything other than the expected ApiException above (a network
+        // hiccup already surfaces as one of those) is unanticipated — worth
+        // a non-fatal report so a bug here doesn't just look like "this
+        // phone stopped sending" with no clue why.
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          reason: 'Unexpected error in gateway-sender claim/send loop',
+        );
         await Future.delayed(_pollInterval);
       }
     }
@@ -363,7 +453,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                Expanded(child: _buildRecipientList(palette)),
+                _buildRecipientList(palette),
               ],
             ],
           ),
@@ -519,6 +609,14 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     ),
   );
 
+  // Always returns a widget that is itself an Expanded (either directly, in
+  // the non-empty case, or via _buildEmptyState's own Expanded) — the call
+  // site above must NOT wrap this in another Expanded, since Expanded's
+  // ParentDataWidget can't stack directly on top of another one without a
+  // Flex in between (this used to be exactly that bug: an Expanded wrapping
+  // _buildEmptyState's Expanded, which threw "Competing ParentDataWidgets"
+  // any time _records was empty — i.e. every time this screen first loads,
+  // before the first message is ever claimed).
   Widget _buildRecipientList(StationPalette palette) {
     if (_records.isEmpty) {
       return _buildEmptyState(
@@ -529,13 +627,15 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       );
     }
 
-    return StationCard(
-      padding: EdgeInsets.zero,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        itemCount: _records.length,
-        separatorBuilder: (context, index) => Divider(height: 1, color: palette.border),
-        itemBuilder: (context, index) => _RecipientRow(record: _records[index]),
+    return Expanded(
+      child: StationCard(
+        padding: EdgeInsets.zero,
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          itemCount: _records.length,
+          separatorBuilder: (context, index) => Divider(height: 1, color: palette.border),
+          itemBuilder: (context, index) => _RecipientRow(record: _records[index]),
+        ),
       ),
     );
   }

@@ -22,11 +22,13 @@ class RealtimeService {
     required this.port,
     required this.appKey,
     required this.repository,
+    this.scheme = 'ws',
   });
 
   final String host;
   final int port;
   final String appKey;
+  final String scheme;
   final ParentRepository repository;
 
   WebSocketChannel? _channel;
@@ -48,7 +50,7 @@ class RealtimeService {
     if (_disposed) return;
 
     final uri = Uri(
-      scheme: 'ws',
+      scheme: scheme,
       host: host,
       port: port,
       path: '/app/$appKey',

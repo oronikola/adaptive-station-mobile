@@ -179,6 +179,7 @@ class _ParentShellState extends State<ParentShell> {
       host: ApiConfig.realtimeHost,
       port: ApiConfig.realtimePort,
       appKey: ApiConfig.realtimeAppKey,
+      scheme: ApiConfig.realtimeScheme,
       repository: widget.repository,
     )..connect(parentId, _handleLiveTap);
   }
