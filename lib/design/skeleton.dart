@@ -27,19 +27,25 @@ class _ShimmerState extends State<Shimmer> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final palette = StationPalette.of(context);
-    return AnimatedBuilder(
-      animation: _controller,
-      child: widget.child,
-      builder: (context, child) => ShaderMask(
-        blendMode: BlendMode.srcATop,
-        shaderCallback: (bounds) => LinearGradient(
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-          colors: [palette.skeletonBase, palette.skeletonHighlight, palette.skeletonBase],
-          stops: const [0.35, 0.5, 0.65],
-          transform: _SlidingGradient(bounds.width * (_controller.value * 3 - 1)),
-        ).createShader(bounds),
-        child: child,
+    // RepaintBoundary — same reasoning as RadarPulse: this repeats forever
+    // while a skeleton is showing, and ShaderMask's offscreen compositing
+    // makes each tick pricier than a plain repaint, so isolating it matters
+    // even for a short-lived loading state.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _controller,
+        child: widget.child,
+        builder: (context, child) => ShaderMask(
+          blendMode: BlendMode.srcATop,
+          shaderCallback: (bounds) => LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [palette.skeletonBase, palette.skeletonHighlight, palette.skeletonBase],
+            stops: const [0.35, 0.5, 0.65],
+            transform: _SlidingGradient(bounds.width * (_controller.value * 3 - 1)),
+          ).createShader(bounds),
+          child: child,
+        ),
       ),
     );
   }

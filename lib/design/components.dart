@@ -71,21 +71,28 @@ class _RadarPulseState extends State<RadarPulse>
   }
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: widget.size * 3,
-    height: widget.size * 3,
-    child: AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) => Stack(
-        alignment: Alignment.center,
-        children: [
-          for (var i = 0; i < widget.ringCount; i++) _ring(i),
-          Container(
-            width: widget.size,
-            height: widget.size,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
-          ),
-        ],
+  // RepaintBoundary — this animates forever (..repeat(), never stops) for
+  // as long as a child is tapped in, and several of these can be on screen
+  // at once (avatar strip + StatusPill). Without it, every ~16ms tick
+  // repaints this widget's entire parent layer along with it; with it,
+  // Flutter isolates the repaint to just this small area.
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: SizedBox(
+      width: widget.size * 3,
+      height: widget.size * 3,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) => Stack(
+          alignment: Alignment.center,
+          children: [
+            for (var i = 0; i < widget.ringCount; i++) _ring(i),
+            Container(
+              width: widget.size,
+              height: widget.size,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
+            ),
+          ],
+        ),
       ),
     ),
   );
