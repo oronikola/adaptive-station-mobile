@@ -16,48 +16,6 @@ import '../../services/realtime_service.dart';
 import '../../services/theme_controller.dart';
 import 'dashboard_screen.dart';
 
-/// One row in the grouped attendance list — either a day-section label or a
-/// tap. Modeled as a sealed type so [SliverChildBuilderDelegate] can render
-/// either lazily, one row at a time, from a single flat list.
-sealed class _AttendanceRow {}
-
-class _DayHeaderRow extends _AttendanceRow {
-  _DayHeaderRow(this.label);
-  final String label;
-}
-
-class _TapRowItem extends _AttendanceRow {
-  _TapRowItem(this.tap);
-  final AttendanceTap tap;
-}
-
-/// Buckets [taps] (already newest-first) into "Today" / "Yesterday" / date
-/// groups, inserting one header per group as the day changes.
-List<_AttendanceRow> _groupTapsByDay(List<AttendanceTap> taps) {
-  final today = DateTime.now();
-  final todayDate = DateTime(today.year, today.month, today.day);
-
-  String labelFor(DateTime occurredAt) {
-    final day = DateTime(occurredAt.year, occurredAt.month, occurredAt.day);
-    final diff = todayDate.difference(day).inDays;
-    if (diff == 0) return 'Today';
-    if (diff == 1) return 'Yesterday';
-    return formatTapDate(occurredAt);
-  }
-
-  final rows = <_AttendanceRow>[];
-  String? currentLabel;
-  for (final tap in taps) {
-    final label = labelFor(tap.occurredAt);
-    if (label != currentLabel) {
-      rows.add(_DayHeaderRow(label));
-      currentLabel = label;
-    }
-    rows.add(_TapRowItem(tap));
-  }
-  return rows;
-}
-
 class ParentShell extends StatefulWidget {
   const ParentShell({
     super.key,
@@ -86,6 +44,11 @@ class _ParentShellState extends State<ParentShell> {
   );
   RealtimeService? _realtime;
   int _unreadUpdates = 0;
+
+  // ── Attendance tab: calendar overview ──────────────────────────────────
+  DateTime _calendarMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  DateTime? _calendarSelectedDate;
+
   static const _labels = ['Home', 'Attendance', 'Updates', 'Account'];
   static const _destinations = [
     StationNavDestination(icon: LucideIcons.home, label: 'Home'),
@@ -127,6 +90,10 @@ class _ParentShellState extends State<ParentShell> {
         _taps = taps;
         _preferences = preferences;
         _loading = false;
+        // Only on first load — a pull-to-refresh re-running this must not
+        // yank the calendar back to wherever the most recent tap is if the
+        // parent has since navigated elsewhere in it.
+        if (_calendarSelectedDate == null) _focusMostRecentActivity();
       });
       _connectRealtime();
     } on ApiException catch (e) {
@@ -622,12 +589,40 @@ class _ParentShellState extends State<ParentShell> {
     ),
   );
 
+  List<AttendanceTap> get _activeChildTaps => _taps
+      .where((tap) => _studentId == null || tap.student.id == _studentId)
+      .toList();
+
+  /// Jumps the calendar to whichever month the active child's most recent
+  /// tap falls in and selects that date, so opening (or switching children
+  /// on) the Attendance tab shows something meaningful immediately instead
+  /// of an empty "tap a date" hint. Called from setState blocks — mutates
+  /// state directly rather than calling setState itself, so callers can
+  /// batch it with their own other changes (e.g. switching _studentId) into
+  /// a single rebuild.
+  void _focusMostRecentActivity() {
+    final taps = _activeChildTaps;
+    if (taps.isEmpty) return;
+    final mostRecent = taps.first; // _taps is kept sorted newest-first
+    final date = DateTime(
+      mostRecent.occurredAt.year,
+      mostRecent.occurredAt.month,
+      mostRecent.occurredAt.day,
+    );
+    _calendarMonth = DateTime(date.year, date.month);
+    _calendarSelectedDate = date;
+  }
+
+  void _jumpToToday() {
+    HapticFeedback.selectionClick();
+    final now = DateTime.now();
+    setState(() {
+      _calendarMonth = DateTime(now.year, now.month);
+      _calendarSelectedDate = DateTime(now.year, now.month, now.day);
+    });
+  }
+
   Widget _attendance(bool tablet, double navClearance) {
-    final taps = _taps
-        .where((tap) => _studentId == null || tap.student.id == _studentId)
-        .toList();
-    final rows = _groupTapsByDay(taps);
-    final firstTapRowIndex = rows.indexWhere((row) => row is _TapRowItem);
     final side = tablet ? 32.0 : 20.0;
 
     Widget constrained(Widget child) => Align(
@@ -662,14 +657,19 @@ class _ParentShellState extends State<ParentShell> {
                         ChoiceChip(
                           label: const Text('All children'),
                           selected: _studentId == null,
-                          onSelected: (_) => setState(() => _studentId = null),
+                          onSelected: (_) => setState(() {
+                            _studentId = null;
+                            _focusMostRecentActivity();
+                          }),
                         ),
                         for (final student in _children)
                           ChoiceChip(
                             label: Text(student.name.split(' ').first),
                             selected: _studentId == student.id,
-                            onSelected: (_) =>
-                                setState(() => _studentId = student.id),
+                            onSelected: (_) => setState(() {
+                              _studentId = student.id;
+                              _focusMostRecentActivity();
+                            }),
                           ),
                       ],
                     ),
@@ -680,135 +680,311 @@ class _ParentShellState extends State<ParentShell> {
             ),
           ),
         ),
-        if (rows.isEmpty)
-          SliverToBoxAdapter(
-            child: constrained(
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  side,
-                  0,
-                  side,
-                  side + navClearance,
-                ),
-                child: const StationCard(
-                  child: Text('No attendance recorded yet.'),
-                ),
-              ),
-            ),
-          )
-        else
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final row = rows[index];
-                final isLast = index == rows.length - 1;
-                final padding = EdgeInsets.fromLTRB(
-                  side,
-                  row is _DayHeaderRow && index != 0 ? 18 : 0,
-                  side,
-                  isLast ? side + navClearance : 0,
-                );
-                return constrained(
-                  Padding(
-                    padding: padding,
-                    child: switch (row) {
-                      _DayHeaderRow(:final label) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Text(
-                          label.toUpperCase(),
-                          style: StationFonts.mono(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: StationPalette.of(context).muted,
-                            letterSpacing: 1.4,
-                          ),
-                        ),
-                      ),
-                      _TapRowItem(:final tap) => _timelineNode(
-                        context: context,
-                        tap: tap,
-                        // The line only runs between two taps in the same
-                        // day group — a header on either side breaks it, so
-                        // the circuit visually resets per day.
-                        hasAbove: index > 0 && rows[index - 1] is _TapRowItem,
-                        hasBelow:
-                            index < rows.length - 1 &&
-                            rows[index + 1] is _TapRowItem,
-                        isLive: index == firstTapRowIndex,
-                      ),
-                    },
-                  ),
-                );
-              },
-              // ListView.builder-style lazy building: each row is only
-              // constructed when it scrolls into view, so a family's full
-              // history can grow without the whole list being built upfront.
-              childCount: rows.length,
+        SliverToBoxAdapter(
+          child: constrained(
+            Padding(
+              padding: EdgeInsets.fromLTRB(side, 0, side, side + navClearance),
+              child: _calendarSection(),
             ),
           ),
+        ),
       ],
     );
   }
 
-  /// One node on the vertical "circuit" timeline: a glowing dot (mint for
-  /// IN, cyan for OUT) connected to its neighbors by a glowing laser line,
-  /// with the tap's own details in a glass card to its right. The line
-  /// segments above/below only render when there's a same-day neighbor to
-  /// connect to, so each day group reads as its own separate circuit.
-  Widget _timelineNode({
-    required BuildContext context,
-    required AttendanceTap tap,
-    required bool hasAbove,
-    required bool hasBelow,
-    required bool isLive,
-  }) {
-    final palette = StationPalette.of(context);
-    final color = tap.isIn ? palette.green : palette.blue;
-    final lineColor = color.withValues(alpha: 0.35);
+  static const _weekdayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-    Widget line() => Container(
-      width: 2,
-      color: lineColor,
-      margin: const EdgeInsets.symmetric(horizontal: 6),
-    );
+  /// Groups the active child's taps by calendar day (year/month/day, local
+  /// time already — see AttendanceTap.fromJson) so the month grid can look
+  /// up "does this date have activity" and the day-detail panel below it can
+  /// look up "what happened that day" from the same map.
+  Map<DateTime, List<AttendanceTap>> get _tapsByDate {
+    final map = <DateTime, List<AttendanceTap>>{};
+    for (final tap in _activeChildTaps) {
+      final day = DateTime(
+        tap.occurredAt.year,
+        tap.occurredAt.month,
+        tap.occurredAt.day,
+      );
+      (map[day] ??= []).add(tap);
+    }
+    return map;
+  }
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+  void _changeCalendarMonth(int delta) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _calendarMonth = DateTime(
+        _calendarMonth.year,
+        _calendarMonth.month + delta,
+      );
+      // A selection from the previous month has no cell to show against
+      // once the grid moves on — clearing it avoids a detail panel for a
+      // date that's no longer visible above it.
+      if (_calendarSelectedDate != null &&
+          (_calendarSelectedDate!.year != _calendarMonth.year ||
+              _calendarSelectedDate!.month != _calendarMonth.month)) {
+        _calendarSelectedDate = null;
+      }
+    });
+  }
+
+  /// Month-grid overview (Logs answers "what happened," this answers "when
+  /// did anything happen") — every date with at least one tap gets a
+  /// colored dot; tapping a date reveals that day's taps below the grid.
+  Widget _calendarSection() {
+    return Builder(
+      builder: (context) {
+        final palette = StationPalette.of(context);
+        final tapsByDate = _tapsByDate;
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final firstOfMonth = DateTime(
+          _calendarMonth.year,
+          _calendarMonth.month,
+        );
+        final daysInMonth = DateTime(
+          _calendarMonth.year,
+          _calendarMonth.month + 1,
+          0,
+        ).day;
+        // DateTime.weekday is 1=Mon..7=Sun; the grid header runs Sun..Sat,
+        // so Sunday needs 0 leading blanks, Monday needs 1, etc.
+        final leadingBlanks = firstOfMonth.weekday % 7;
+
+        final selected = _calendarSelectedDate;
+        final selectedTaps = selected == null
+            ? const <AttendanceTap>[]
+            : (tapsByDate[selected] ?? const <AttendanceTap>[]);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: 14,
+            StationCard(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: hasAbove ? line() : const SizedBox()),
-                  isLive
-                      ? RadarPulse(color: color, size: 10, ringCount: 2)
-                      : Container(
-                          width: 14,
-                          height: 14,
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => _changeCalendarMonth(-1),
+                        icon: const Icon(LucideIcons.chevronLeft),
+                        tooltip: 'Previous month',
+                      ),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '${_monthName(_calendarMonth.month)} ${_calendarMonth.year}',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            TextButton(
+                              onPressed: _jumpToToday,
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text(
+                                'Jump to today',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => _changeCalendarMonth(1),
+                        icon: const Icon(LucideIcons.chevronRight),
+                        tooltip: 'Next month',
+                      ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          margin: const EdgeInsets.only(right: 6),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: color,
+                            color: palette.green,
                           ),
                         ),
-                  Expanded(child: hasBelow ? line() : const SizedBox()),
+                        Text(
+                          'Recorded activity',
+                          style: TextStyle(fontSize: 11, color: palette.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      for (final label in _weekdayLabels)
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              label,
+                              style: StationFonts.mono(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: palette.muted,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 7,
+                        ),
+                    itemCount: leadingBlanks + daysInMonth,
+                    itemBuilder: (context, index) {
+                      if (index < leadingBlanks) return const SizedBox();
+                      final day = index - leadingBlanks + 1;
+                      final date = DateTime(
+                        _calendarMonth.year,
+                        _calendarMonth.month,
+                        day,
+                      );
+                      final hasActivity = tapsByDate.containsKey(date);
+                      final isToday = date == today;
+                      final isSelected = date == selected;
+
+                      return Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () => setState(
+                            () => _calendarSelectedDate = isSelected
+                                ? null
+                                : date,
+                          ),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              color: isSelected
+                                  ? palette.blue
+                                  : isToday
+                                  ? palette.inset
+                                  : null,
+                              border: isToday && !isSelected
+                                  ? Border.all(color: palette.blue, width: 1.5)
+                                  : null,
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  '$day',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: isToday || isSelected
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: isSelected
+                                        ? palette.onAccent
+                                        : palette.heading,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: hasActivity
+                                        ? (isSelected
+                                              ? palette.onAccent
+                                              : palette.green)
+                                        : Colors.transparent,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: StationCard(
-                padding: const EdgeInsets.all(14),
-                child: TapRow(tap: tap),
+            const SizedBox(height: 16),
+            if (selected != null)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      formatTapDate(selected).toUpperCase(),
+                      style: StationFonts.mono(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: palette.muted,
+                        letterSpacing: 1.4,
+                      ),
+                    ),
+                  ),
+                  if (selectedTaps.isEmpty)
+                    const StationCard(
+                      child: Text('No activity recorded on this date.'),
+                    )
+                  else
+                    for (final tap in selectedTaps)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: StationCard(
+                          padding: const EdgeInsets.all(14),
+                          child: TapRow(tap: tap),
+                        ),
+                      ),
+                ],
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Tap a highlighted date to see that day\'s activity.',
+                  style: TextStyle(fontSize: 12, color: palette.muted),
+                ),
               ),
-            ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
+
+  static String _monthName(int month) => const [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ][month - 1];
+
+  // Capped, not unbounded — the full history always lives one tab over in
+  // Attendance, so Updates only needs to surface the most recent handful
+  // rather than growing forever.
+  static const _maxUpdatesShown = 10;
 
   Widget _updates(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -820,8 +996,8 @@ class _ParentShellState extends State<ParentShell> {
       ),
       if (_taps.isEmpty)
         const StationCard(child: Text('No tap alerts yet.'))
-      else
-        for (final tap in _taps.take(2))
+      else ...[
+        for (final tap in _taps.take(_maxUpdatesShown))
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: StationCard(
@@ -838,6 +1014,16 @@ class _ParentShellState extends State<ParentShell> {
               ),
             ),
           ),
+        if (_taps.length > _maxUpdatesShown)
+          Center(
+            child: TextButton(
+              onPressed: () => _navigate(1),
+              child: Text(
+                'View all ${_taps.length} in Attendance',
+              ),
+            ),
+          ),
+      ],
     ],
   );
 

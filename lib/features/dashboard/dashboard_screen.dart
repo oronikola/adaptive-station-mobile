@@ -217,7 +217,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 for (var i = 0; i < recentTaps.length.clamp(0, 2); i++) ...[
                   if (i > 0) const Divider(height: 32),
-                  TapRow(tap: recentTaps[i]),
+                  TapRow(tap: recentTaps[i], showDate: true),
                 ],
               ],
             ),
@@ -479,7 +479,7 @@ class ChildCard extends StatelessWidget {
                       ),
                       if (tap != null)
                         Text(
-                          tap.station,
+                          '${tap.station} · ${tap.date}',
                           style: StationFonts.mono(fontSize: 11, color: palette.muted),
                         ),
                     ],
