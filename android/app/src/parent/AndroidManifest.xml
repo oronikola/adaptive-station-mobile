@@ -1,0 +1,34 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- The `parent` flavor — the only one ever published to Play Store —
+         must not carry any of the SMS/telephony/background-service
+         permissions the gateway-sender role needs. The main manifest
+         declares those directly (see its own comment), and two plugins
+         (sim_data_new, flutter_foreground_task) inject a few more via their
+         own bundled manifests regardless of which Dart entry point runs —
+         both kinds are stripped here with tools:node="remove", which is
+         the standard manifest-merger technique for "a dependency adds this,
+         but this specific build variant must not have it." POST_NOTIFICATIONS
+         is deliberately NOT removed — the parent app still needs it for its
+         own FCM tap-alert notifications. -->
+
+    <uses-permission android:name="android.permission.SEND_SMS" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" tools:node="remove"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" tools:node="remove"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK" tools:node="remove"/>
+
+    <application>
+        <!-- flutter_foreground_task's own boot receivers — meaningless
+             without the service they restart, and RECEIVE_BOOT_COMPLETED is
+             already stripped above, so remove the components too rather
+             than leave dead, permission-less receivers declared. -->
+        <receiver android:name="com.pravera.flutter_foreground_task.service.RebootReceiver" tools:node="remove"/>
+        <receiver android:name="com.pravera.flutter_foreground_task.service.RestartReceiver" tools:node="remove"/>
+        <service android:name="com.pravera.flutter_foreground_task.service.ForegroundService" tools:node="remove"/>
+    </application>
+</manifest>

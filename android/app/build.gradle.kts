@@ -33,6 +33,13 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
+    // AGP 8+ no longer generates BuildConfig by default — MainActivity's
+    // "getFlavor" channel handler reads BuildConfig.FLAVOR, so this must be
+    // on explicitly.
+    buildFeatures {
+        buildConfig = true
+    }
+
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
@@ -70,6 +77,26 @@ android {
                 signingConfigs.getByName("debug")
             }
         }
+    }
+
+    // Two genuinely separate builds from one codebase: `parent` is the one
+    // that ever goes to Play Store (no SMS/phone permissions at all — see
+    // src/parent/AndroidManifest.xml's tools:node="remove" entries, which
+    // strip out what sim_data_new/flutter_foreground_task inject on their
+    // own regardless of which Dart entry point is used); `gateway` keeps
+    // every permission the SMS-sending fleet phones need and is only ever
+    // sideloaded directly onto school-owned devices, never published.
+    //
+    // Both flavors deliberately share the same applicationId. Giving them
+    // separate ids would need a second Firebase Android app registered
+    // against google-services.json (Firebase Console access, not something
+    // done from here) — and since a gateway phone and a parent phone are
+    // always different physical devices anyway, there's no real need for
+    // them to be independently installable side by side on one device.
+    flavorDimensions += "role"
+    productFlavors {
+        create("parent") { dimension = "role" }
+        create("gateway") { dimension = "role" }
     }
 }
 

@@ -12,6 +12,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import com.adaptivestation.app.BuildConfig
 
 /**
  * Gateway-sender mode's native SMS send — ported from the standalone
@@ -83,6 +84,11 @@ class MainActivity : FlutterActivity() {
                     } else {
                         result.error("INVALID_PARAMETERS", "Missing parameters", null)
                     }
+                } else if (call.method == "getFlavor") {
+                    // Read straight from Gradle's own BuildConfig rather than a
+                    // --dart-define — a flag passed separately from --flavor
+                    // could be forgotten or mismatched; this can't drift.
+                    result.success(BuildConfig.FLAVOR)
                 } else {
                     result.notImplemented()
                 }
