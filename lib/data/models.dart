@@ -90,6 +90,18 @@ class NotificationPreferences {
       );
 }
 
+/// Safe confirmation returned after the server has handed the request to the
+/// credential delivery service. This deliberately contains no username,
+/// password, or unmasked telephone number.
+class CredentialDelivery {
+  const CredentialDelivery({required this.maskedPhone});
+
+  final String maskedPhone;
+
+  factory CredentialDelivery.fromJson(Map<String, dynamic> json) =>
+      CredentialDelivery(maskedPhone: (json['masked_phone'] as String?) ?? '');
+}
+
 const _months = [
   'January',
   'February',

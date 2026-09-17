@@ -15,6 +15,7 @@ import '../../services/push_notification_service.dart';
 import '../../services/realtime_service.dart';
 import '../../services/theme_controller.dart';
 import 'dashboard_screen.dart';
+import 'credential_request_sheet.dart';
 
 class ParentShell extends StatefulWidget {
   const ParentShell({
@@ -206,6 +207,23 @@ class _ParentShellState extends State<ParentShell> {
     unawaited(widget.repository.logout());
     widget.onLoggedOut();
   }
+
+  Future<void> _showCredentialRequestSheet() => showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (sheetContext) => CredentialRequestSheet(
+      children: _children,
+      onRequest: (student) async {
+        try {
+          return await widget.repository.requestStudentCredentials(student);
+        } on ApiException catch (error) {
+          if (error.statusCode == 401 && mounted) _logout();
+          rethrow;
+        }
+      },
+    ),
+  );
 
   Future<void> _updatePreference({bool? notifyIn, bool? notifyOut}) async {
     HapticFeedback.lightImpact();
@@ -1101,9 +1119,33 @@ class _ParentShellState extends State<ParentShell> {
         ),
       ),
       const SizedBox(height: 24),
-      const SectionHeading(title: 'Connect a child'),
+      const SectionHeading(title: 'Student credentials'),
       StationCard(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Need a student\'s login details?',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'We\'ll send the existing credentials by SMS to the verified primary guardian number.',
+              style: TextStyle(color: StationPalette.of(context).muted),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _children.isEmpty ? null : _showCredentialRequestSheet,
+              icon: const Icon(Icons.sms_outlined),
+              label: const Text('Get credentials'),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 24),
+      /*
+      StationCard(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
@@ -1130,6 +1172,7 @@ class _ParentShellState extends State<ParentShell> {
           ],
         ),
       ),
+      */
       const SizedBox(height: 24),
       SizedBox(
         width: double.infinity,

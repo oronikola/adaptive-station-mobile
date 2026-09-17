@@ -105,4 +105,39 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('Parent can request credentials without displaying them', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      StationParentApp(
+        parentRepository: FakeParentRepository(),
+        gatewayRepository: ApiGatewaySenderRepository(),
+        themeController: ThemeController(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Account').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Get credentials'));
+    await tester.tap(find.text('Get credentials'));
+    await tester.pumpAndSettle();
+    expect(find.text('Get student credentials'), findsOneWidget);
+    expect(find.text('Alex Santos'), findsOneWidget);
+
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(find.text('Confirm request'), findsOneWidget);
+    await tester.tap(find.text('Send credentials'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Credentials queued'), findsOneWidget);
+    expect(find.textContaining('+63••••1234'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -22,6 +22,11 @@ abstract class ParentRepository {
 
   Future<List<AttendanceTap>> fetchAttendance(Student student);
 
+  /// Requests Essential's existing credential SMS flow for a child already
+  /// linked to this authenticated parent. The returned value is delivery
+  /// metadata only; credentials must never enter the mobile application.
+  Future<CredentialDelivery> requestStudentCredentials(Student student);
+
   Future<void> registerDeviceToken(String fcmToken);
 
   Future<NotificationPreferences> fetchNotificationPreferences();
@@ -112,6 +117,14 @@ class ApiParentRepository implements ParentRepository {
     return events
         .map((event) => AttendanceTap.fromJson(event, student))
         .toList();
+  }
+
+  @override
+  Future<CredentialDelivery> requestStudentCredentials(Student student) async {
+    final response = await _client.post('/children/${student.id}/credentials');
+    return CredentialDelivery.fromJson(
+      (response['delivery'] as Map<String, dynamic>?) ?? response,
+    );
   }
 
   @override

@@ -44,6 +44,10 @@ class FakeParentRepository implements ParentRepository {
       DemoAttendance.taps.where((tap) => tap.student.id == student.id).toList();
 
   @override
+  Future<CredentialDelivery> requestStudentCredentials(Student student) async =>
+      const CredentialDelivery(maskedPhone: '+63••••1234');
+
+  @override
   Future<void> registerDeviceToken(String fcmToken) async {}
 
   @override
