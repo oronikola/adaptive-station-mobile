@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sim_data_new/sim_data.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -17,6 +18,49 @@ import '../../services/sim_sms_sender.dart';
 import '../../services/theme_controller.dart';
 
 enum _SendStatus { sending, sent, delivered, notDelivered, failed }
+
+/// One independent claim/send loop's target.
+///
+/// Either a specific physical SIM (dual-SIM throughput mode, one loop each)
+/// or — the default — the phone's own default SMS subscription, the exact
+/// path the built-in Messages app uses.
+///
+/// Why that default: a message handed to a specific, self-chosen
+/// subscription can be accepted by the radio (so this app reports "sent")
+/// and still silently never reach the recipient, while the identical text
+/// typed by hand in the Messages app arrives every time on the same phone,
+/// same SIM, same number. Deliverability beats the second SIM's extra
+/// throughput, so per-SIM mode is now opt-in rather than automatic.
+class _SendChannel {
+  const _SendChannel({
+    required this.subscriptionId,
+    required this.slotIndex,
+    required this.label,
+  });
+
+  /// Negative means "let Android use the default SMS subscription" — see
+  /// MainActivity.kt's sendSms().
+  final int subscriptionId;
+
+  /// Reported to the backend for per-SIM stats. Null in default-SIM mode,
+  /// where the OS (not this app) picks the subscription, so claiming a
+  /// specific slot would be a guess rather than a fact.
+  final int? slotIndex;
+
+  final String label;
+
+  static const defaultSim = _SendChannel(
+    subscriptionId: -1,
+    slotIndex: null,
+    label: 'Default SIM',
+  );
+
+  static _SendChannel forSim(SimCard sim) => _SendChannel(
+    subscriptionId: sim.subscriptionId,
+    slotIndex: sim.slotIndex,
+    label: 'SIM ${sim.slotIndex + 1}',
+  );
+}
 
 /// One claimed message's outcome, shown as a row in the recipient list —
 /// this is the structured replacement for what used to be a scrolling raw
@@ -41,8 +85,9 @@ class _SendRecord {
   final String simLabel;
   /// The phone's own SIM slot index (0 or 1) — reported to the backend
   /// alongside sent/failed/delivered so it can track a daily send cap per
-  /// SIM, not just per phone.
-  final int slotIndex;
+  /// SIM, not just per phone. Null in default-SIM mode, where the OS picks
+  /// the subscription and this app has no honest slot to report.
+  final int? slotIndex;
 }
 
 /// Gateway-sender mode's whole screen: runs one independent claim/send/report
@@ -84,6 +129,7 @@ class GatewaySenderShell extends StatefulWidget {
     this.smsSender = const MethodChannelSimSmsSender(),
     @visibleForTesting this.debugRealtimeService,
     @visibleForTesting this.debugInitialSimCards,
+    @visibleForTesting this.debugUseDefaultSim,
   });
   final GatewaySenderRepository repository;
   final VoidCallback onLoggedOut;
@@ -109,6 +155,13 @@ class GatewaySenderShell extends StatefulWidget {
   @visibleForTesting
   final List<SimCard>? debugInitialSimCards;
 
+  /// Test-only seam: skips reading the persisted SIM-mode preference (a
+  /// SharedPreferences platform channel a widget test can't answer) and
+  /// forces the mode directly. Always null in production, where the
+  /// persisted value — defaulting to default-SIM mode — is used instead.
+  @visibleForTesting
+  final bool? debugUseDefaultSim;
+
   @override
   State<GatewaySenderShell> createState() => _GatewaySenderShellState();
 }
@@ -119,11 +172,18 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   static const _batchSize = 20;
   static const _maxRecords = 200;
 
+  static const _useDefaultSimPrefsKey = 'gateway_use_default_sim';
+
   List<SimCard> _simCards = [];
   final List<_SendRecord> _records = [];
   StreamSubscription<SmsDeliveryReport>? _deliverySubscription;
   bool _running = false;
   bool _permissionsGranted = false;
+
+  /// Defaults to true: send the way the phone's own Messages app does. See
+  /// [_SendChannel]'s docblock for why that is the safe default and per-SIM
+  /// mode is opt-in.
+  bool _useDefaultSim = true;
   int _sentCount = 0;
   int _deliveredCount = 0;
   int _failedCount = 0;
@@ -184,6 +244,12 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     } catch (_) {}
   }
 
+  /// Every loop this phone should currently run — one per enabled SIM, or
+  /// the single default-SIM channel. See [_SendChannel]'s docblock.
+  List<_SendChannel> get _channels => _useDefaultSim
+      ? const [_SendChannel.defaultSim]
+      : _simCards.map(_SendChannel.forSim).toList();
+
   Future<void> _bootstrap() async {
     // Test-only seam (see the field's docblock): skips the two platform
     // calls below entirely, since a widget test has no real permission
@@ -194,10 +260,13 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       setState(() {
         _permissionsGranted = true;
         _simCards = debugCards;
+        _useDefaultSim = widget.debugUseDefaultSim ?? true;
       });
-      if (debugCards.isNotEmpty) _start();
+      if (_channels.isNotEmpty) _start();
       return;
     }
+
+    final useDefaultSim = await _loadUseDefaultSim();
 
     final smsStatus = await Permission.sms.request();
     final phoneStatus = await Permission.phone.request();
@@ -225,11 +294,42 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     setState(() {
       _permissionsGranted = granted;
       _simCards = cards;
+      _useDefaultSim = useDefaultSim;
     });
 
-    if (granted && cards.isNotEmpty) {
+    // Default-SIM mode deliberately does not require SIM *detection* to
+    // have worked — the OS knows its own default subscription even when
+    // SimDataPlugin can't enumerate cards, so a phone that can send by hand
+    // can send here too rather than being stuck on "No SIM detected".
+    if (granted && _channels.isNotEmpty) {
       _start();
     }
+  }
+
+  Future<bool> _loadUseDefaultSim() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_useDefaultSimPrefsKey) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Switching modes restarts every loop, since which subscription each send
+  /// goes out on is fixed when its loop starts.
+  Future<void> _setUseDefaultSim(bool value) async {
+    if (_useDefaultSim == value) return;
+
+    await _stop();
+    if (!mounted) return;
+    setState(() => _useDefaultSim = value);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_useDefaultSimPrefsKey, value);
+    } catch (_) {}
+
+    if (_permissionsGranted && _channels.isNotEmpty) _start();
   }
 
   void _onDeliveryReport(SmsDeliveryReport report) {
@@ -277,10 +377,11 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       ).timeout(_osNicetyTimeout);
     } catch (_) {}
 
-    // One independent loop per SIM — see the class docblock for why this is
-    // both safe and the actual fix for a dual-SIM phone's real throughput.
-    for (final sim in _simCards) {
-      unawaited(_loopForSim(sim));
+    // One independent loop per enabled channel — see the class docblock for
+    // why per-SIM loops are safe and good for throughput, and
+    // [_SendChannel]'s for why default-SIM mode is nonetheless the default.
+    for (final channel in _channels) {
+      unawaited(_loopForChannel(channel));
     }
   }
 
@@ -324,8 +425,8 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     ]);
   }
 
-  Future<void> _loopForSim(SimCard sim) async {
-    final simLabel = 'SIM ${sim.slotIndex + 1}';
+  Future<void> _loopForChannel(_SendChannel channel) async {
+    final simLabel = channel.label;
 
     while (_running) {
       try {
@@ -348,14 +449,14 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
             status: _SendStatus.sending,
             timestamp: DateTime.now(),
             simLabel: simLabel,
-            slotIndex: sim.slotIndex,
+            slotIndex: channel.slotIndex,
           );
           _records.insert(0, record);
           if (_records.length > _maxRecords) _records.removeLast();
           if (mounted) setState(() {});
 
           final result = await widget.smsSender.send(
-            subscriptionId: sim.subscriptionId,
+            subscriptionId: channel.subscriptionId,
             phoneNumber: message.phoneNumber,
             message: message.message,
             messageId: message.id,
@@ -364,7 +465,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
           if (result == 'sent') {
             await widget.repository.reportSent(
               message.id,
-              simSlot: sim.slotIndex,
+              simSlot: channel.slotIndex,
             );
             record.status = _SendStatus.sent;
             _sentCount++;
@@ -373,7 +474,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
             await widget.repository.reportFailed(
               message.id,
               error,
-              simSlot: sim.slotIndex,
+              simSlot: channel.slotIndex,
             );
             record.status = _SendStatus.failed;
             record.error = error;
@@ -444,7 +545,10 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
                   message: 'SMS and phone access are required to operate as a gateway device.',
                   action: FilledButton(onPressed: _bootstrap, child: const Text('Grant permissions')),
                 )
-              else if (_simCards.isEmpty)
+              // Only per-SIM mode actually needs SIM *detection* to have
+              // worked — default-SIM mode leaves the choice to the OS, so a
+              // phone whose SIM data can't be read can still send.
+              else if (_channels.isEmpty)
                 _buildEmptyState(
                   palette,
                   icon: LucideIcons.wifiOff,
@@ -454,6 +558,8 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
               else ...[
                 _buildStatsRow(palette),
                 const SizedBox(height: 14),
+                _buildSimModeControl(palette),
+                const SizedBox(height: 10),
                 _buildRunControl(palette),
                 const SizedBox(height: 22),
                 Row(
@@ -549,15 +655,53 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     );
   }
 
+  /// Lets whoever is holding the phone switch between "send exactly like
+  /// the Messages app does" (default, most reliable) and per-SIM sending
+  /// (faster on a dual-SIM phone, but only if both SIMs genuinely deliver).
+  /// See [_SendChannel]'s docblock for the field failure that made this a
+  /// setting rather than a fixed behavior.
+  Widget _buildSimModeControl(StationPalette palette) => StationCard(
+    padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
+    child: Row(
+      children: [
+        Icon(
+          _useDefaultSim ? LucideIcons.shieldCheck : LucideIcons.layers,
+          size: 17,
+          color: _useDefaultSim ? palette.green : palette.blue,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            _useDefaultSim
+                ? 'Default SIM — sends like the Messages app'
+                : 'All SIMs (${_simCards.length}) — faster, each must deliver',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: palette.ink),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        Switch(
+          value: _useDefaultSim,
+          onChanged: (value) => unawaited(_setUseDefaultSim(value)),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ],
+    ),
+  );
+
   Widget _buildEmptyState(
     StationPalette palette, {
     required IconData icon,
     required String title,
     required String message,
     Widget? action,
+    // Scrollable rather than a bare Column: this sits inside an Expanded, so
+    // on a short screen (or once the cards above it grow) the fixed-height
+    // icon/title/message stack can be handed less room than it needs, which
+    // would otherwise be a hard overflow rather than something the operator
+    // can simply scroll.
   }) => Expanded(
     child: Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,

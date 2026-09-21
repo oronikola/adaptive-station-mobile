@@ -24,12 +24,18 @@ const _testSim = SimCard(
   phoneNumber: '+639170000000',
 );
 
+/// [useDefaultSim] defaults to false here so these tests keep exercising the
+/// per-SIM loops they were written for; production defaults to true (send
+/// through the phone's own default SMS subscription) — see
+/// GatewaySenderShell's _SendChannel docblock, and the dedicated
+/// default-SIM test at the bottom of this file.
 Future<void> _pumpShell(
   WidgetTester tester, {
   required GatewaySenderRepository repository,
   required FakeSimSmsSender smsSender,
   required FakeGatewayRealtimeService realtime,
   List<SimCard> simCards = const [_testSim],
+  bool useDefaultSim = false,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -40,6 +46,7 @@ Future<void> _pumpShell(
         smsSender: smsSender,
         debugRealtimeService: realtime,
         debugInitialSimCards: simCards,
+        debugUseDefaultSim: useDefaultSim,
       ),
     ),
   );
@@ -218,6 +225,67 @@ void main() {
     await _disposeAndSettle(tester);
   });
 
+  /// The production default. A message handed to a specific, self-chosen
+  /// subscription was being accepted by the radio (reported "sent") and
+  /// still never delivered, while the identical text typed by hand in the
+  /// Messages app — which always uses the phone's default subscription —
+  /// arrived every time. A negative subscriptionId is how the native side
+  /// is told to use that same default path (see MainActivity.kt's sendSms).
+  testWidgets('default-SIM mode sends via the phone default subscription, not a chosen SIM', (tester) async {
+    final repository = FakeGatewaySenderRepository(
+      queue: [
+        const GatewayMessage(id: 'm6', phoneNumber: '+639176666666', message: 'Ana tapped IN'),
+      ],
+    );
+    final smsSender = FakeSimSmsSender();
+    final realtime = FakeGatewayRealtimeService();
+
+    await _pumpShell(
+      tester,
+      repository: repository,
+      smsSender: smsSender,
+      realtime: realtime,
+      simCards: const [_testSim],
+      useDefaultSim: true,
+    );
+
+    expect(repository.reportedSent, ['m6']);
+    expect(smsSender.sentMessages.single['subscriptionId'], '-1');
+    // No slot is claimed: the OS picked the subscription, so reporting one
+    // would be a guess rather than a fact.
+    expect(repository.reportedSentSimSlots, [null]);
+
+    await _disposeAndSettle(tester);
+  });
+
+  /// Only per-SIM mode needs SIM enumeration to have worked — default-SIM
+  /// mode leaves the choice to the OS, so a phone whose SIM data can't be
+  /// read must still be able to send rather than being stuck on the "No SIM
+  /// detected" screen.
+  testWidgets('default-SIM mode still sends when no SIM cards could be enumerated', (tester) async {
+    final repository = FakeGatewaySenderRepository(
+      queue: [
+        const GatewayMessage(id: 'm7', phoneNumber: '+639177777777', message: 'Ben tapped OUT'),
+      ],
+    );
+    final smsSender = FakeSimSmsSender();
+    final realtime = FakeGatewayRealtimeService();
+
+    await _pumpShell(
+      tester,
+      repository: repository,
+      smsSender: smsSender,
+      realtime: realtime,
+      simCards: const [],
+      useDefaultSim: true,
+    );
+
+    expect(find.text('No SIM detected'), findsNothing);
+    expect(repository.reportedSent, ['m7']);
+
+    await _disposeAndSettle(tester);
+  });
+
   testWidgets('a 401 from claim() stops the loop and logs the device out', (tester) async {
     final repository = FakeGatewaySenderRepository()
       ..nextClaimError = ApiException('Session revoked.', statusCode: 401);
@@ -234,6 +302,7 @@ void main() {
           smsSender: smsSender,
           debugRealtimeService: realtime,
           debugInitialSimCards: const [_testSim],
+          debugUseDefaultSim: false,
         ),
       ),
     );
