@@ -43,16 +43,41 @@ class MainActivity : FlutterActivity() {
             val messageId = intent?.getStringExtra("messageId")
             val callback = resultCallbacks.remove(messageId) ?: return
 
-            val resultMessage = when (resultCode) {
-                Activity.RESULT_OK -> "sent"
-                SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "error: generic failure"
-                SmsManager.RESULT_ERROR_NO_SERVICE -> "error: no service"
-                SmsManager.RESULT_ERROR_NULL_PDU -> "error: null pdu"
-                SmsManager.RESULT_ERROR_RADIO_OFF -> "error: radio off"
-                else -> "error: unknown"
-            }
+            val resultMessage = smsResultMessage(resultCode, intent)
 
             callback.success(resultMessage)
+        }
+    }
+
+    /**
+     * Turns Android's SMS result into an operator-actionable failure reason.
+     * `errorCode` is carrier/modem specific, so the fleet log keeps it as a
+     * diagnostic rather than pretending it always means a particular issue
+     * such as insufficient load. Android only adds `noDefault` to a generic
+     * failure when it could not select a SIM subscription.
+     */
+    private fun smsResultMessage(resultCode: Int, intent: Intent?): String {
+        if (resultCode == Activity.RESULT_OK) {
+            return "sent"
+        }
+
+        return when (resultCode) {
+            SmsManager.RESULT_ERROR_GENERIC_FAILURE -> {
+                val hasNoDefaultSim = intent?.getBooleanExtra("noDefault", false) == true
+                val carrierErrorCode = intent?.getIntExtra("errorCode", 0) ?: 0
+
+                when {
+                    hasNoDefaultSim -> "error: no default SIM selected"
+                    carrierErrorCode != 0 -> "error: carrier rejected SMS (code $carrierErrorCode)"
+                    else -> "error: carrier rejected SMS (no carrier detail)"
+                }
+            }
+            SmsManager.RESULT_ERROR_NO_SERVICE -> "error: no mobile service"
+            SmsManager.RESULT_ERROR_NULL_PDU -> "error: SMS message data is missing"
+            SmsManager.RESULT_ERROR_RADIO_OFF -> "error: SIM radio is turned off"
+            SmsManager.RESULT_ERROR_LIMIT_EXCEEDED -> "error: SMS sending limit reached"
+            SmsManager.RESULT_ERROR_FDN_CHECK_FAILURE -> "error: SIM fixed-dialing restriction"
+            else -> "error: SMS send failed (Android code $resultCode)"
         }
     }
 
