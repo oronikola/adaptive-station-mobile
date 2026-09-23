@@ -19,6 +19,12 @@ import '../../services/theme_controller.dart';
 
 enum _SendStatus { sending, sent, delivered, notDelivered, failed }
 
+/// Which bucket the Recipients list is currently narrowed to — set by
+/// tapping the Sent/Failed stat card. "Sent" matches anything that went out
+/// the radio successfully (including a later delivery outcome), since this
+/// screen no longer breaks that out as its own stat.
+enum _RecipientFilter { all, sent, failed }
+
 /// One independent claim/send loop's target.
 ///
 /// Either a specific physical SIM (dual-SIM throughput mode, one loop each)
@@ -191,8 +197,19 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   /// mode is opt-in.
   bool _useDefaultSim = true;
   int _sentCount = 0;
-  int _deliveredCount = 0;
   int _failedCount = 0;
+
+  _RecipientFilter _filter = _RecipientFilter.all;
+
+  void _toggleFilter(_RecipientFilter filter) {
+    setState(() => _filter = _filter == filter ? _RecipientFilter.all : filter);
+  }
+
+  List<_SendRecord> get _filteredRecords => switch (_filter) {
+    _RecipientFilter.all => _records,
+    _RecipientFilter.sent => _records.where((r) => r.status != _SendStatus.failed).toList(),
+    _RecipientFilter.failed => _records.where((r) => r.status == _SendStatus.failed).toList(),
+  };
 
   // Lets an idle _loopForSim() skip the rest of its poll wait the instant
   // the server broadcasts "a message was just queued" (see
@@ -351,7 +368,6 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     if (report.delivered) {
       record.status = _SendStatus.delivered;
       record.timestamp = DateTime.now();
-      _deliveredCount++;
       // Not every carrier sends a delivery report at all — reportDelivered
       // is best-effort; a failure here shouldn't roll back the local status.
       widget.repository
@@ -685,8 +701,32 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
                     Expanded(
                       child: Text('Recipients', style: Theme.of(context).textTheme.titleMedium),
                     ),
+                    if (_filter != _RecipientFilter.all) ...[
+                      GestureDetector(
+                        onTap: () => setState(() => _filter = _RecipientFilter.all),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: palette.blueTint,
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _filter == _RecipientFilter.sent ? 'Sent' : 'Failed',
+                                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: palette.blue),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(LucideIcons.x, size: 11, color: palette.blue),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     Text(
-                      '${_records.length}',
+                      '${_filteredRecords.length}',
                       style: StationFonts.mono(fontSize: 12, color: palette.muted, fontWeight: FontWeight.w700),
                     ),
                   ],
@@ -846,11 +886,29 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
 
   Widget _buildStatsRow(StationPalette palette) => Row(
     children: [
-      Expanded(child: _StatCard(icon: LucideIcons.send, label: 'Sent', value: _sentCount, color: palette.blue, tint: palette.blueTint)),
+      Expanded(
+        child: _StatCard(
+          icon: LucideIcons.send,
+          label: 'Sent',
+          value: _sentCount,
+          color: palette.blue,
+          tint: palette.blueTint,
+          selected: _filter == _RecipientFilter.sent,
+          onTap: () => _toggleFilter(_RecipientFilter.sent),
+        ),
+      ),
       const SizedBox(width: 10),
-      Expanded(child: _StatCard(icon: LucideIcons.checkCheck, label: 'Delivered', value: _deliveredCount, color: palette.green, tint: palette.greenTint)),
-      const SizedBox(width: 10),
-      Expanded(child: _StatCard(icon: LucideIcons.xCircle, label: 'Failed', value: _failedCount, color: Colors.red, tint: Colors.red.withValues(alpha: 0.12))),
+      Expanded(
+        child: _StatCard(
+          icon: LucideIcons.xCircle,
+          label: 'Failed',
+          value: _failedCount,
+          color: Colors.red,
+          tint: Colors.red.withValues(alpha: 0.12),
+          selected: _filter == _RecipientFilter.failed,
+          onTap: () => _toggleFilter(_RecipientFilter.failed),
+        ),
+      ),
     ],
   );
 
@@ -902,20 +960,34 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       );
     }
 
+    final filtered = _filteredRecords;
+    if (filtered.isEmpty) {
+      final (title, message) = switch (_filter) {
+        _RecipientFilter.sent => ('No sent messages', 'Nothing has gone out yet — check back once the next batch sends.'),
+        _RecipientFilter.failed => ('No failed messages', 'Every claimed message so far has gone out fine.'),
+        _RecipientFilter.all => ('Nothing sent yet', 'Claimed messages will appear here as soon as there\'s a pending tap alert.'),
+      };
+      return _buildEmptyState(palette, icon: LucideIcons.messageSquare, title: title, message: message);
+    }
+
     return Expanded(
       child: StationCard(
         padding: EdgeInsets.zero,
         child: ListView.separated(
           padding: const EdgeInsets.symmetric(vertical: 4),
-          itemCount: _records.length,
+          itemCount: filtered.length,
           separatorBuilder: (context, index) => Divider(height: 1, color: palette.border),
-          itemBuilder: (context, index) => _RecipientRow(record: _records[index]),
+          itemBuilder: (context, index) => _RecipientRow(record: filtered[index]),
         ),
       ),
     );
   }
 }
 
+/// A tappable version of the plain stat tile — tapping toggles the
+/// Recipients list to only that bucket (see [_RecipientFilter]). `selected`
+/// draws a colored ring + tinted background so it's obvious which filter (if
+/// any) is currently active.
 class _StatCard extends StatelessWidget {
   const _StatCard({
     required this.icon,
@@ -923,40 +995,65 @@ class _StatCard extends StatelessWidget {
     required this.value,
     required this.color,
     required this.tint,
+    this.selected = false,
+    this.onTap,
   });
   final IconData icon;
   final String label;
   final int value;
   final Color color;
   final Color tint;
+  final bool selected;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = StationPalette.of(context);
-    return StationCard(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: tint, borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, size: 15, color: color),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: selected ? tint : palette.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: selected ? color : palette.border, width: selected ? 1.5 : 1),
+            boxShadow: palette.cardShadow,
           ),
-          const SizedBox(height: 10),
-          TweenAnimationBuilder<int>(
-            tween: IntTween(begin: 0, end: value),
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeOutCubic,
-            builder: (context, animatedValue, _) => Text(
-              '$animatedValue',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(color: tint, borderRadius: BorderRadius.circular(10)),
+                    child: Icon(icon, size: 15, color: color),
+                  ),
+                  if (onTap != null) Icon(LucideIcons.filter, size: 13, color: selected ? color : palette.muted),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TweenAnimationBuilder<int>(
+                tween: IntTween(begin: 0, end: value),
+                duration: const Duration(milliseconds: 400),
+                curve: Curves.easeOutCubic,
+                builder: (context, animatedValue, _) => Text(
+                  '$animatedValue',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              Text(label, style: TextStyle(color: palette.muted, fontSize: 11)),
+            ],
           ),
-          Text(label, style: TextStyle(color: palette.muted, fontSize: 11)),
-        ],
+        ),
       ),
     );
   }
@@ -992,12 +1089,21 @@ class _RecipientRow extends StatelessWidget {
                   children: [
                     Text(
                       record.phoneNumber,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: StationFonts.mono(fontSize: 13, color: palette.heading, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      '· ${record.simLabel}',
-                      style: StationFonts.mono(fontSize: 10.5, color: palette.muted),
+                    // A long label like "Default SIM (SIM 1)" plus a full
+                    // phone number can outgrow the row's width — Flexible
+                    // lets this shrink and ellipsize instead of overflowing.
+                    Flexible(
+                      child: Text(
+                        '· ${record.simLabel}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: StationFonts.mono(fontSize: 10.5, color: palette.muted),
+                      ),
                     ),
                   ],
                 ),

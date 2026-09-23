@@ -123,6 +123,52 @@ void main() {
     await _disposeAndSettle(tester);
   });
 
+  testWidgets('tapping the Sent or Failed stat card filters the recipient list', (tester) async {
+    final repository = FakeGatewaySenderRepository(
+      queue: [
+        const GatewayMessage(id: 'm9', phoneNumber: '+639179999999', message: 'ok'),
+        const GatewayMessage(id: 'm10', phoneNumber: '+639170000009', message: 'bad'),
+      ],
+    );
+    // claim() hands out one message per call (see the fake's docblock), so
+    // the loop claims m9 first (fails, since this is read before send()
+    // resets it to 'sent'), then claims again for m10 (succeeds).
+    final smsSender = FakeSimSmsSender()..nextSendResult = 'error: no service';
+    final realtime = FakeGatewayRealtimeService();
+
+    await _pumpShell(tester, repository: repository, smsSender: smsSender, realtime: realtime);
+    // Two full claim/send/10s-delay cycles need more than one _settle().
+    await _settle(tester);
+    await _settle(tester);
+    await _settle(tester);
+
+    expect(repository.reportedFailed, [('m9', 'no service')]);
+    expect(repository.reportedSent, ['m10']);
+    expect(find.textContaining('+639179999999'), findsOneWidget);
+    expect(find.textContaining('+639170000009'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(InkWell, 'Failed'));
+    await tester.pump();
+
+    expect(find.textContaining('+639179999999'), findsOneWidget);
+    expect(find.textContaining('+639170000009'), findsNothing);
+
+    // Tapping the same, already-active filter clears it again.
+    await tester.tap(find.widgetWithText(InkWell, 'Failed'));
+    await tester.pump();
+
+    expect(find.textContaining('+639179999999'), findsOneWidget);
+    expect(find.textContaining('+639170000009'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(InkWell, 'Sent'));
+    await tester.pump();
+
+    expect(find.textContaining('+639170000009'), findsOneWidget);
+    expect(find.textContaining('+639179999999'), findsNothing);
+
+    await _disposeAndSettle(tester);
+  });
+
   testWidgets('a delivery report updates a sent message to Delivered', (tester) async {
     final repository = FakeGatewaySenderRepository(
       queue: [
@@ -139,10 +185,11 @@ void main() {
     await _settle(tester);
 
     // The pill switched from "Sent" to "Delivered" — only the stat-card
-    // label still says "Sent" now, while "Delivered" shows up twice (its
-    // own stat-card label + this record's pill).
+    // label still says "Sent" now. There's no "Delivered" stat card (the
+    // Recipients screen only tracks Sent/Failed), so the pill is the only
+    // "Delivered" text left.
     expect(find.text('Sent'), findsOneWidget);
-    expect(find.text('Delivered'), findsNWidgets(2));
+    expect(find.text('Delivered'), findsOneWidget);
     expect(repository.reportedDelivered, ['m3']);
     expect(repository.reportedDeliveredSimSlots, [0]);
 
