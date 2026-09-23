@@ -18,6 +18,13 @@ class GatewayMessage {
       );
 }
 
+class GatewayClaim {
+  const GatewayClaim({required this.messages, required this.capacityExhausted});
+
+  final List<GatewayMessage> messages;
+  final bool capacityExhausted;
+}
+
 /// Everything gateway-sender mode needs from the backend — the claim/send
 /// loop's data layer, parallel to ParentRepository. Implemented for real by
 /// [ApiGatewaySenderRepository]; tests use a fake implementation instead of
@@ -34,7 +41,10 @@ abstract class GatewaySenderRepository {
 
   Future<void> logout();
 
-  Future<List<GatewayMessage>> claim({int batchSize = 20});
+  Future<GatewayClaim> claim({
+    int batchSize = 20,
+    required int simSlot,
+  });
 
   /// [simSlot] is the phone's own SIM slot index (0 or 1 on a dual-SIM
   /// device) the message was actually sent from — lets the backend track a
@@ -101,10 +111,19 @@ class ApiGatewaySenderRepository implements GatewaySenderRepository {
   }
 
   @override
-  Future<List<GatewayMessage>> claim({int batchSize = 20}) async {
-    final response = await _client.post('/claim', {'batch_size': batchSize});
+  Future<GatewayClaim> claim({
+    int batchSize = 20,
+    required int simSlot,
+  }) async {
+    final response = await _client.post('/claim', {
+      'batch_size': batchSize,
+      'sim_slot': simSlot,
+    });
     final messages = (response['messages'] as List).cast<Map<String, dynamic>>();
-    return messages.map(GatewayMessage.fromJson).toList();
+    return GatewayClaim(
+      messages: messages.map(GatewayMessage.fromJson).toList(),
+      capacityExhausted: response['capacity_exhausted'] as bool? ?? false,
+    );
   }
 
   @override

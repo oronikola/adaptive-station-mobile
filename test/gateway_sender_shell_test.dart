@@ -253,7 +253,43 @@ void main() {
     expect(smsSender.sentMessages.single['subscriptionId'], '-1');
     // No slot is claimed: the OS picked the subscription, so reporting one
     // would be a guess rather than a fact.
-    expect(repository.reportedSentSimSlots, [null]);
+    expect(repository.reportedSentSimSlots, [0]);
+
+    await _disposeAndSettle(tester);
+  });
+
+  testWidgets('default-SIM mode falls back to the other SIM when its default SIM cannot claim', (tester) async {
+    const secondSim = SimCard(
+      carrierName: 'Test Telecom 2',
+      countryCode: 'PH',
+      displayName: 'Test SIM 2',
+      isNetworkRoaming: false,
+      isDataRoaming: false,
+      mcc: 515,
+      mnc: 3,
+      slotIndex: 1,
+      serialNumber: '0001',
+      subscriptionId: 2,
+      phoneNumber: '+639170000001',
+    );
+    final repository = FakeGatewaySenderRepository(
+      queue: [const GatewayMessage(id: 'm8', phoneNumber: '+639178888888', message: 'Sam tapped IN')],
+    )..unavailableSimSlots.add(0);
+    final smsSender = FakeSimSmsSender();
+    final realtime = FakeGatewayRealtimeService();
+
+    await _pumpShell(
+      tester,
+      repository: repository,
+      smsSender: smsSender,
+      realtime: realtime,
+      simCards: const [_testSim, secondSim],
+      useDefaultSim: true,
+    );
+
+    expect(repository.claimedSimSlots, containsAllInOrder([0, 1]));
+    expect(smsSender.sentMessages.single['subscriptionId'], '2');
+    expect(repository.reportedSentSimSlots, [1]);
 
     await _disposeAndSettle(tester);
   });
@@ -280,8 +316,8 @@ void main() {
       useDefaultSim: true,
     );
 
-    expect(find.text('No SIM detected'), findsNothing);
-    expect(repository.reportedSent, ['m7']);
+    expect(find.text('No SIM detected'), findsOneWidget);
+    expect(repository.reportedSent, isEmpty);
 
     await _disposeAndSettle(tester);
   });

@@ -16,6 +16,8 @@ class FakeGatewaySenderRepository implements GatewaySenderRepository {
   final List<int?> reportedSentSimSlots = [];
   final List<int?> reportedFailedSimSlots = [];
   final List<int?> reportedDeliveredSimSlots = [];
+  final List<int> claimedSimSlots = [];
+  final Set<int> unavailableSimSlots = {};
   int claimCalls = 0;
   bool loggedIn = true;
 
@@ -42,12 +44,20 @@ class FakeGatewaySenderRepository implements GatewaySenderRepository {
   }
 
   @override
-  Future<List<GatewayMessage>> claim({int batchSize = 20}) async {
+  Future<GatewayClaim> claim({
+    int batchSize = 20,
+    required int simSlot,
+  }) async {
     claimCalls++;
+    claimedSimSlots.add(simSlot);
     final error = nextClaimError;
     if (error != null) {
       nextClaimError = null;
       throw error;
+    }
+
+    if (unavailableSimSlots.contains(simSlot)) {
+      return const GatewayClaim(messages: [], capacityExhausted: true);
     }
 
     // Deliberately ignores batchSize and hands out one message per call
@@ -57,7 +67,7 @@ class FakeGatewaySenderRepository implements GatewaySenderRepository {
     // to call claim() first.
     final taken = _queue.take(1).toList();
     _queue.removeRange(0, taken.length);
-    return taken;
+    return GatewayClaim(messages: taken, capacityExhausted: false);
   }
 
   @override

@@ -60,6 +60,12 @@ class _SendChannel {
     slotIndex: sim.slotIndex,
     label: 'SIM ${sim.slotIndex + 1}',
   );
+
+  static _SendChannel forDefaultSim(SimCard sim) => _SendChannel(
+    subscriptionId: -1,
+    slotIndex: sim.slotIndex,
+    label: 'Default SIM (SIM ${sim.slotIndex + 1})',
+  );
 }
 
 /// One claimed message's outcome, shown as a row in the recipient list —
@@ -247,7 +253,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
   /// Every loop this phone should currently run — one per enabled SIM, or
   /// the single default-SIM channel. See [_SendChannel]'s docblock.
   List<_SendChannel> get _channels => _useDefaultSim
-      ? const [_SendChannel.defaultSim]
+      ? const []
       : _simCards.map(_SendChannel.forSim).toList();
 
   Future<void> _bootstrap() async {
@@ -262,7 +268,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
         _simCards = debugCards;
         _useDefaultSim = widget.debugUseDefaultSim ?? true;
       });
-      if (_channels.isNotEmpty) _start();
+      if (_useDefaultSim ? _simCards.isNotEmpty : _channels.isNotEmpty) _start();
       return;
     }
 
@@ -301,7 +307,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     // have worked — the OS knows its own default subscription even when
     // SimDataPlugin can't enumerate cards, so a phone that can send by hand
     // can send here too rather than being stuck on "No SIM detected".
-    if (granted && _channels.isNotEmpty) {
+    if (granted && (_useDefaultSim ? cards.isNotEmpty : _channels.isNotEmpty)) {
       _start();
     }
   }
@@ -329,7 +335,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
       await prefs.setBool(_useDefaultSimPrefsKey, value);
     } catch (_) {}
 
-    if (_permissionsGranted && _channels.isNotEmpty) _start();
+    if (_permissionsGranted && (_useDefaultSim ? _simCards.isNotEmpty : _channels.isNotEmpty)) _start();
   }
 
   void _onDeliveryReport(SmsDeliveryReport report) {
@@ -380,8 +386,12 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     // One independent loop per enabled channel — see the class docblock for
     // why per-SIM loops are safe and good for throughput, and
     // [_SendChannel]'s for why default-SIM mode is nonetheless the default.
-    for (final channel in _channels) {
-      unawaited(_loopForChannel(channel));
+    if (_useDefaultSim) {
+      unawaited(_loopForDefaultSim());
+    } else {
+      for (final channel in _channels) {
+        unawaited(_loopForChannel(channel));
+      }
     }
   }
 
@@ -425,14 +435,122 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
     ]);
   }
 
+  Future<_SendChannel?> _defaultSimChannel() async {
+    final subscriptionId = await widget.smsSender.defaultSmsSubscriptionId();
+    if (subscriptionId == null) return null;
+
+    final sim = _simCards
+        .where((card) => card.subscriptionId == subscriptionId)
+        .firstOrNull;
+    return sim == null ? null : _SendChannel.forDefaultSim(sim);
+  }
+
+  Future<void> _loopForDefaultSim() async {
+    while (_running && _useDefaultSim) {
+      try {
+        final defaultChannel = await _defaultSimChannel();
+        if (defaultChannel == null) {
+          await _waitForWakeUpOrPollInterval();
+          continue;
+        }
+
+        var activeChannel = defaultChannel;
+        var claim = await widget.repository.claim(
+          batchSize: _batchSize,
+          simSlot: defaultChannel.slotIndex!,
+        );
+        if (claim.messages.isEmpty && claim.capacityExhausted) {
+          final fallbackSim = _simCards
+              .where((sim) => sim.slotIndex != defaultChannel.slotIndex)
+              .firstOrNull;
+          if (fallbackSim != null) {
+            activeChannel = _SendChannel.forSim(fallbackSim);
+            claim = await widget.repository.claim(
+              batchSize: _batchSize,
+              simSlot: activeChannel.slotIndex!,
+            );
+          }
+        }
+
+        if (claim.messages.isEmpty) {
+          await _waitForWakeUpOrPollInterval();
+          continue;
+        }
+
+        await _sendClaimedMessages(activeChannel, claim.messages);
+      } on ApiException catch (e) {
+        if (e.statusCode == 401) {
+          await _handleUnauthorized();
+          return;
+        }
+        await Future.delayed(_pollInterval);
+      } catch (e, stack) {
+        if (!_running) return;
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          reason: 'Unexpected error in gateway-sender default-SIM loop',
+        );
+        await Future.delayed(_pollInterval);
+      }
+    }
+  }
+
+  Future<void> _sendClaimedMessages(
+    _SendChannel channel,
+    List<GatewayMessage> messages,
+  ) async {
+    for (final message in messages) {
+      if (!_running) break;
+
+      final record = _SendRecord(
+        id: message.id,
+        phoneNumber: message.phoneNumber,
+        message: message.message,
+        status: _SendStatus.sending,
+        timestamp: DateTime.now(),
+        simLabel: channel.label,
+        slotIndex: channel.slotIndex,
+      );
+      _records.insert(0, record);
+      if (_records.length > _maxRecords) _records.removeLast();
+      if (mounted) setState(() {});
+
+      final result = await widget.smsSender.send(
+        subscriptionId: channel.subscriptionId,
+        phoneNumber: message.phoneNumber,
+        message: message.message,
+        messageId: message.id,
+      );
+
+      if (result == 'sent') {
+        await widget.repository.reportSent(message.id, simSlot: channel.slotIndex);
+        record.status = _SendStatus.sent;
+        _sentCount++;
+      } else {
+        final error = result.replaceFirst('error: ', '');
+        await widget.repository.reportFailed(message.id, error, simSlot: channel.slotIndex);
+        record.status = _SendStatus.failed;
+        record.error = error;
+        _failedCount++;
+      }
+      record.timestamp = DateTime.now();
+
+      if (mounted) setState(() {});
+      await Future.delayed(_perSimSendDelay);
+    }
+  }
+
   Future<void> _loopForChannel(_SendChannel channel) async {
     final simLabel = channel.label;
 
     while (_running) {
       try {
-        final messages = await widget.repository.claim(
+        final claim = await widget.repository.claim(
           batchSize: _batchSize,
+          simSlot: channel.slotIndex!,
         );
+        final messages = claim.messages;
 
         if (messages.isEmpty) {
           await _waitForWakeUpOrPollInterval();
@@ -548,7 +666,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
               // Only per-SIM mode actually needs SIM *detection* to have
               // worked — default-SIM mode leaves the choice to the OS, so a
               // phone whose SIM data can't be read can still send.
-              else if (_channels.isEmpty)
+              else if (_simCards.isEmpty)
                 _buildEmptyState(
                   palette,
                   icon: LucideIcons.wifiOff,
@@ -672,9 +790,7 @@ class _GatewaySenderShellState extends State<GatewaySenderShell> {
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            _useDefaultSim
-                ? 'Default SIM — sends like the Messages app'
-                : 'All SIMs (${_simCards.length}) — faster, each must deliver',
+            'Automatic SIM routing (${_simCards.length}) — each SIM has its own daily limit',
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: palette.ink),
             overflow: TextOverflow.ellipsis,
           ),

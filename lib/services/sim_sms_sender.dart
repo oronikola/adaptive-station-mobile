@@ -22,6 +22,8 @@ abstract interface class SimSmsSender {
   /// listens to it once for the whole screen's lifetime, not per-message.
   Stream<SmsDeliveryReport> get deliveryReports;
 
+  Future<int?> defaultSmsSubscriptionId();
+
   /// Returns `'sent'` on success, or `'error: <reason>'` — never throws for
   /// an ordinary send failure (radio off, no service, etc.), only for a
   /// platform-channel-level problem. [messageId] (the sms_outbox row's id)
@@ -56,6 +58,15 @@ class MethodChannelSimSmsSender implements SimSmsSender {
           delivered: map['delivered'] as bool,
         );
       });
+
+  @override
+  Future<int?> defaultSmsSubscriptionId() async {
+    try {
+      return await _channel.invokeMethod<int>('getDefaultSmsSubscriptionId');
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Future<String> send({

@@ -15,8 +15,13 @@ class FakeSimSmsSender implements SimSmsSender {
   /// so a test only needs to override it for the one send it cares about.
   String nextSendResult = 'sent';
 
+  int? defaultSubscriptionId = 1;
+
   @override
   Stream<SmsDeliveryReport> get deliveryReports => _deliveryController.stream;
+
+  @override
+  Future<int?> defaultSmsSubscriptionId() async => defaultSubscriptionId;
 
   @override
   Future<String> send({
