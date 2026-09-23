@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.telephony.SmsManager
+import android.telephony.SubscriptionManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -187,6 +188,8 @@ class MainActivity : FlutterActivity() {
                     } else {
                         result.error("INVALID_PARAMETERS", "Missing parameters", null)
                     }
+                } else if (call.method == "getDefaultSmsSubscriptionId") {
+                    result.success(SubscriptionManager.getDefaultSmsSubscriptionId())
                 } else if (call.method == "getFlavor") {
                     // Read straight from Gradle's own BuildConfig rather than a
                     // --dart-define — a flag passed separately from --flavor
